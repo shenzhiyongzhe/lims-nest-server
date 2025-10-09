@@ -1,0 +1,261 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           Int      @id @default(autoincrement())
+  username     String   @db.VarChar(10)
+  password     String   @db.VarChar(32)
+  phone        String   @db.VarChar(11) 
+  address      String   @db.VarChar(100)
+  lv           String   @default("青铜用户") @db.VarChar(16)
+  overtime     Int      @default(0)
+  overdue_time Int      @default(0)
+  is_high_risk Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime? @updatedAt
+
+  loanAccounts LoanAccount[]
+  orders       Order[]
+  repaymentRecords RepaymentRecord[]
+  @@map("users")
+}
+
+// 复用的枚举（还款状态）
+enum ManagementRoles {
+  管理员
+  财务员
+  风控人
+  负责人
+  收款人
+  打款人
+}
+model Admin {
+  id           Int      @id @default(autoincrement())
+  username     String   @db.VarChar(10)
+  password     String   @db.VarChar(32)
+  phone        String   @db.VarChar(11) 
+  role         ManagementRoles   
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime? @updatedAt
+
+  // 添加关系
+  shareLinks   ShareLink[]
+  payees       Payee[]
+
+  @@map("admins")
+}
+
+// 复用的枚举（还款状态）
+
+enum RepaymentStatus {
+  pending
+  active
+  paid
+  overtime
+  overdue
+}
+model LoanAccount {
+  id                Int       @id @default(autoincrement()) @db.Int
+  user_id           Int      
+  loan_amount       Decimal   @db.Decimal(10, 2) 
+  receiving_amount  Decimal?  @db.Decimal(10, 2)
+  capital           Decimal   @db.Decimal(10, 2) 
+  interest          Decimal   @db.Decimal(10, 2) 
+  due_start_date    DateTime
+  due_end_date      DateTime
+  status            RepaymentStatus  @default(pending)
+  handling_fee      Decimal   @db.Decimal(10, 2)
+  total_periods     Int
+  repaid_periods    Int       @default(0)
+  daily_repayment   Decimal   @db.Decimal(10, 2)
+  risk_controller   String    @db.VarChar(10)
+  collector         String    @db.VarChar(10)
+  payee             String    @db.VarChar(10)
+  lender            String    @db.VarChar(10)
+  company_cost      Int       @default(0)
+  created_at        DateTime  @default(now())
+  created_by        Int 
+  updated_at        DateTime? @updatedAt
+
+  // 关系
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  repaymentSchedules RepaymentSchedule[]
+  repaymentRecords RepaymentRecord[]
+  @@map("loan_accounts")
+}
+
+model RepaymentSchedule {
+  id             Int              @id @default(autoincrement())
+  loan_id        Int
+  period         Int
+  due_start_date DateTime
+  due_end_date   DateTime
+  due_amount     Decimal          @db.Decimal(10, 2)
+  capital        Decimal?         @db.Decimal(10, 2)
+  interest       Decimal?         @db.Decimal(10, 2)
+  status         RepaymentStatus  @default(pending)
+  paid_amount    Decimal?         @db.Decimal(10, 2)
+  paid_at        DateTime?
+
+  // 外键关系到 LoanAccount
+  loan_account LoanAccount @relation(fields: [loan_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  overdueRecords OverdueRecord[]
+
+  @@map("repayment_schedules")
+}
+
+enum PaymentMethod{
+  wechat_pay
+  ali_pay
+}
+model RepaymentRecord {
+  id              Int @id @default(autoincrement())
+  loan_id         Int 
+  user_id         Int
+  paid_amount     Decimal? @db.Decimal(10, 2)
+  paid_at         DateTime @default(now())
+  payment_method  PaymentMethod @default(wechat_pay) 
+  payee_id        Int
+  remark          String? @db.VarChar(255)
+  order_id        String?
+
+  order         Order? @relation(fields: [order_id], references: [id])
+  loan_account  LoanAccount? @relation(fields: [loan_id], references: [id])
+  user          User? @relation(fields: [user_id], references: [id])
+  payee         Payee? @relation(fields: [payee_id], references: [id])
+  @@map("repayment_records")
+}
+
+// 每日逾期记录表（去重按 schedule_id）
+model OverdueRecord {
+  id           Int      @id @default(autoincrement())
+  user_id      Int
+  loan_id      Int
+  schedule_id  Int      @unique
+  collector    String   @db.VarChar(10)
+  overdue_date DateTime
+  created_at   DateTime @default(now())
+
+  schedule     RepaymentSchedule @relation(fields: [schedule_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@map("overdue_records")
+  @@index([collector, overdue_date])
+  @@index([overdue_date])
+  @@index([user_id, overdue_date])
+}
+
+
+model Payee {
+  id          Int      @id @default(autoincrement())
+  admin_id          Int
+  username          String   @db.VarChar(10)
+  address           String   @db.VarChar(100)
+  payment_limit     Int      @default(20000)
+  qrcode_number     Int      @default(5)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime? @updatedAt
+
+  admin        Admin?   @relation(fields: [admin_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  qrcode       QrCode[]
+  orders       Order[]
+  repaymentRecords RepaymentRecord[]
+  @@map("payees")
+}
+
+// 分享链接表
+model ShareLink {
+  share_id     String   @id @db.VarChar(8) // 8位短ID
+  schedule_ids String   @db.Text // JSON数组存储schedule_id列表
+  summary      String   @db.Text // JSON存储统计信息
+  expires_at   DateTime // 过期时间
+  created_at   DateTime @default(now())
+  updated_at   DateTime? @updatedAt
+  
+  // 可选：关联到创建者
+  created_by   Int? // 创建者ID（管理员ID）
+  admin        Admin? @relation(fields: [created_by], references: [id])
+  orders       Order[]
+  @@map("share_links")
+}
+model QrCode {
+  id           Int      @id @default(autoincrement())
+  payee_id            Int
+  qrcode_url          String   @db.VarChar(255)
+  qrcode_type         PaymentMethod @default(wechat_pay)
+  active              Boolean      @default(true)
+  created_at          DateTime @default(now())
+  updated_at          DateTime? @updatedAt
+  payee        Payee? @relation(fields: [payee_id], references: [id])
+  @@map("qr_codes")
+}
+
+// 在现有schema基础上添加订单表
+model Order {
+  id              String   @id 
+  share_id        String
+  customer_id     Int
+  loan_id         Int
+  amount          Decimal  @db.Decimal(10, 2)
+  payment_periods  Int
+  payment_method  PaymentMethod
+  remark          String?  @db.VarChar(255)
+  status          OrderStatus @default(pending)
+  payee_id        Int?
+  created_at      DateTime @default(now())
+  updated_at      DateTime? @updatedAt
+  expires_at      DateTime
+
+  customer        User     @relation(fields: [customer_id], references: [id])
+  payee           Payee?   @relation(fields: [payee_id], references: [id])
+  share_link      ShareLink @relation(fields: [share_id], references: [share_id], onDelete: Cascade, onUpdate: Cascade)
+  repaymentRecords RepaymentRecord[]
+
+
+  @@map("orders")
+  @@index([status, created_at])
+  @@index([payee_id, created_at])
+  @@index([customer_id, created_at])
+
+}
+
+enum OrderStatus {
+  pending
+  grabbed
+  completed
+  expired
+  cancelled
+}
+
+// 反馈类型
+enum FeedbackType {
+  bug
+  suggestion
+}
+
+// 反馈状态
+enum FeedbackStatus {
+  open
+  fixed
+}
+
+// 用户反馈/建议表
+model Feedback {
+  id          Int             @id @default(autoincrement())
+  title       String          @db.VarChar(100)
+  content     String          @db.Text
+  type        FeedbackType
+  status      FeedbackStatus  @default(open)
+  reporter    String?         @db.VarChar(32) // 提交人（可选）
+  contact     String?         @db.VarChar(64) // 联系方式（可选）
+  created_at  DateTime        @default(now())
+  updated_at  DateTime?       @updatedAt
+
+  @@map("feedbacks")
+  @@index([status, created_at])
+}

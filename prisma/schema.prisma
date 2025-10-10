@@ -123,7 +123,7 @@ model RepaymentRecord {
   payment_method  PaymentMethod @default(wechat_pay) 
   payee_id        Int
   remark          String? @db.VarChar(255)
-  order_id        String?
+  order_id        String
 
   order         Order? @relation(fields: [order_id], references: [id])
   loan_account  LoanAccount? @relation(fields: [loan_id], references: [id])
@@ -197,7 +197,7 @@ model QrCode {
 
 // 在现有schema基础上添加订单表
 model Order {
-  id              String   @id 
+  id              String @id
   share_id        String
   customer_id     Int
   loan_id         Int

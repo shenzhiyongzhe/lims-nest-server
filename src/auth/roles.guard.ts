@@ -5,6 +5,9 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { Request } from 'express';
+import { Reflector } from '@nestjs/core';
+import { ROLES_KEY } from './roles.decorator';
+import { ManagementRoles } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
 interface AuthenticatedRequest extends Request {
@@ -13,7 +16,10 @@ interface AuthenticatedRequest extends Request {
 
 @Injectable()
 export class RolesGuard implements CanActivate {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly reflector: Reflector,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
@@ -24,7 +30,6 @@ export class RolesGuard implements CanActivate {
     }
 
     // 获取用户角色
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
     const admin = (await this.prisma.admin.findUnique({
       where: { id: user.id },
       select: { role: true },
@@ -34,10 +39,15 @@ export class RolesGuard implements CanActivate {
       throw new ForbiddenException('用户不存在');
     }
 
-    // 检查角色权限
-    const allowedRoles = ['管理员', '负责人', '风控人'];
-    if (!allowedRoles.includes(admin.role)) {
-      throw new ForbiddenException('权限不足');
+    // 从元数据读取允许的角色；如果未指定，则默认放行（仅要求登录）
+    const requiredRoles = this.reflector.getAllAndOverride<
+      ManagementRoles[] | undefined
+    >(ROLES_KEY, [context.getHandler(), context.getClass()]);
+
+    if (requiredRoles && requiredRoles.length > 0) {
+      if (!requiredRoles.includes(admin.role as ManagementRoles)) {
+        throw new ForbiddenException('权限不足');
+      }
     }
 
     return true;

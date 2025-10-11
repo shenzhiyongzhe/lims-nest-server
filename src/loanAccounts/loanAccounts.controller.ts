@@ -4,18 +4,16 @@ import {
   Post,
   Body,
   Param,
-  BadRequestException,
-  // ConflictException,
-  InternalServerErrorException,
   ParseIntPipe,
   UseGuards,
 } from '@nestjs/common';
 import { LoanAccountsService } from './loanAccounts.service';
 import { CreateLoanAccountDto } from './dto/create-loanAccount.dto';
-import { LoanAccount } from '@prisma/client';
 import { AuthGuard } from '../auth/auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
+import { ResponseHelper } from 'src/common/response-helper';
+import { ApiResponseDto } from 'src/common/dto/api-response.dto';
 
 @Controller('loan-accounts')
 @UseGuards(AuthGuard, RolesGuard)
@@ -23,51 +21,43 @@ export class LoanAccountsController {
   constructor(private readonly loanAccountsService: LoanAccountsService) {}
 
   @Get()
-  async findAll(): Promise<LoanAccount[]> {
-    return this.loanAccountsService.findAll();
+  async findAll(): Promise<ApiResponseDto> {
+    const loans = await this.loanAccountsService.findAll();
+    return ResponseHelper.success(loans, '获取贷款记录成功');
   }
 
   @Get(':id')
-  async findById(@Param('id', ParseIntPipe) id: number): Promise<LoanAccount> {
+  async findById(
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<ApiResponseDto> {
     const loan = await this.loanAccountsService.findById(id);
     if (!loan) {
-      throw new BadRequestException('贷款记录不存在');
+      return ResponseHelper.error('贷款记录不存在', 400);
     }
-    return loan;
+    return ResponseHelper.success(loan, '获取贷款记录成功');
   }
 
   @Post()
   async create(
     @Body() body: CreateLoanAccountDto,
     @CurrentUser() user: { id: number },
-  ): Promise<{ message: string; data: LoanAccount }> {
+  ): Promise<ApiResponseDto> {
     try {
       const { due_start_date, total_periods, collector, payee } = body;
 
       if (!due_start_date || !total_periods || !collector || !payee) {
-        throw new BadRequestException('缺少必要参数');
+        return ResponseHelper.error('缺少必要参数', 400);
       }
 
       const createdBy = user.id;
 
       const loan = await this.loanAccountsService.create(body, createdBy);
 
-      return {
-        message: '创建成功',
-        data: loan,
-      };
+      return ResponseHelper.success(loan, '创建贷款记录成功');
     } catch (error: any) {
       console.error('创建贷款记录错误:', error);
 
-      // if (error.code === 'P2002') {
-      //   throw new ConflictException('手机号已存在');
-      // }
-
-      if (error instanceof BadRequestException) {
-        throw error;
-      }
-
-      throw new InternalServerErrorException('服务器错误');
+      return ResponseHelper.error(`创建贷款记录失败: ${error.message}`, 500);
     }
   }
 }

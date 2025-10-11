@@ -14,12 +14,14 @@ import { ApiResponseDto } from '../common/dto/api-response.dto';
 import { AuthGuard } from '../auth/auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import type { RepaymentSchedule } from '@prisma/client';
+import { LoanAccountsService } from '../loanAccounts/loanAccounts.service';
 
 @Controller('repayment-schedules')
 @UseGuards(AuthGuard, RolesGuard)
 export class RepaymentSchedulesController {
   constructor(
     private readonly repaymentSchedulesService: RepaymentSchedulesService,
+    private readonly loanAccountsService: LoanAccountsService,
   ) {}
 
   @Put()
@@ -36,17 +38,8 @@ export class RepaymentSchedulesController {
   async findByLoanId(
     @Param('loanId', ParseIntPipe) loanId: number,
   ): Promise<ApiResponseDto> {
-    const schedules = await this.repaymentSchedulesService.findByLoanId(loanId);
-
-    if (schedules.length === 0) {
-      throw new NotFoundException('该贷款记录暂无还款计划');
-    }
-
-    const data = schedules.map((schedule) =>
-      this.repaymentSchedulesService.toResponse(schedule),
-    );
-
-    return ResponseHelper.success(data, '获取还款计划成功');
+    const loan = await this.loanAccountsService.findById(loanId);
+    return ResponseHelper.success(loan, '获取还款计划成功');
   }
 
   @Get(':id')

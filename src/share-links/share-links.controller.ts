@@ -1,13 +1,4 @@
-import {
-  Controller,
-  Post,
-  Get,
-  Body,
-  Param,
-  UseGuards,
-  BadRequestException,
-  NotFoundException,
-} from '@nestjs/common';
+import { Controller, Post, Get, Body, Param, UseGuards } from '@nestjs/common';
 import { ShareLinksService } from './share-links.service';
 import { CreateShareLinkDto } from './dto/create-share-link.dto';
 import { ResponseHelper } from '../common/response-helper';
@@ -35,10 +26,7 @@ export class ShareLinksController {
       );
       return ResponseHelper.success(result, '创建分享链接成功');
     } catch (error: any) {
-      if (error instanceof BadRequestException) {
-        throw error;
-      }
-      throw new BadRequestException('创建分享链接失败');
+      return ResponseHelper.error(`创建分享链接失败: ${error.message}`, 500);
     }
   }
 
@@ -55,13 +43,7 @@ export class ShareLinksController {
       };
       return ResponseHelper.success(data, '获取分享链接成功');
     } catch (error: any) {
-      if (
-        error instanceof BadRequestException ||
-        error instanceof NotFoundException
-      ) {
-        throw error;
-      }
-      throw new BadRequestException('获取分享链接失败');
+      return ResponseHelper.error(`获取分享链接失败: ${error.message}`, 500);
     }
   }
 }

@@ -28,6 +28,15 @@ export class UsersController {
     };
     return ResponseHelper.success(data, '获取用户成功');
   }
+  @Get(':id')
+  async findOne(@Param('id') id: number): Promise<ApiResponseDto> {
+    const user = await this.usersService.findById(id);
+    if (!user) {
+      throw new NotFoundException('用户暂未注册');
+    }
+    const data = this.usersService.toResponse(user);
+    return ResponseHelper.success(data, '获取用户成功');
+  }
   @Post()
   async create(@Body() body: CreateUserDto): Promise<ApiResponseDto> {
     const user = await this.usersService.create(body);
@@ -49,21 +58,6 @@ export class UsersController {
     const data = this.usersService.toResponse(user);
     return ResponseHelper.success(data, '登录成功');
   }
-  @Get(':id')
-  async findOne(@Param('id') id: number): Promise<ApiResponseDto> {
-    const user = await this.usersService.findById(id);
-    if (!user) {
-      throw new NotFoundException('用户暂未注册');
-    }
-    const data = this.usersService.toResponse(user);
-    return ResponseHelper.success(data, '获取用户成功');
-  }
-  @Delete(':id')
-  async delete(@Param('id') id: number): Promise<ApiResponseDto> {
-    const user = await this.usersService.delete(id);
-    const data = this.usersService.toResponse(user);
-    return ResponseHelper.success(data, '删除用户成功');
-  }
   @Put(':id')
   async update(
     @Param('id') id: number,
@@ -72,5 +66,17 @@ export class UsersController {
     const user = await this.usersService.update(id, body);
     const data = this.usersService.toResponse(user);
     return ResponseHelper.success(data, '更新用户成功');
+  }
+  @Delete(':id')
+  async delete(
+    @Param('id') id: number,
+    @Query('admin_password') admin_password: string,
+  ): Promise<ApiResponseDto> {
+    if (admin_password !== process.env.ADMIN_PASSWORD) {
+      throw new UnauthorizedException('管理员密码错误');
+    }
+    const user = await this.usersService.delete(id);
+    const data = this.usersService.toResponse(user);
+    return ResponseHelper.success(data, '删除用户成功');
   }
 }

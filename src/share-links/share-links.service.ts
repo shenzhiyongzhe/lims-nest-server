@@ -115,7 +115,7 @@ export class ShareLinksService {
     });
 
     // 生成分享链接
-    const shareUrl = `${baseUrl}/page/share-links/${shareId}`;
+    const shareUrl = `${baseUrl}/page/share-links?token=${shareId}`;
 
     return {
       shareUrl,

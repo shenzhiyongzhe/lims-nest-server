@@ -26,6 +26,20 @@ export class LoanAccountsController {
     return ResponseHelper.success(loans, '获取贷款记录成功');
   }
 
+  @Get('grouped-by-user')
+  async groupedByUser(): Promise<ApiResponseDto> {
+    const rows = await this.loanAccountsService.findGroupedByUser();
+    return ResponseHelper.success(rows, '按用户分组获取成功');
+  }
+
+  @Get('user/:userId')
+  async findByUser(
+    @Param('userId', ParseIntPipe) userId: number,
+  ): Promise<ApiResponseDto> {
+    const rows = await this.loanAccountsService.findByUserId(userId);
+    return ResponseHelper.success(rows, '获取用户贷款记录成功');
+  }
+
   @Get(':id')
   async findById(
     @Param('id', ParseIntPipe) id: number,

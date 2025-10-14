@@ -65,6 +65,7 @@ model LoanAccount {
   user_id           Int      
   loan_amount       Decimal   @db.Decimal(10, 2) 
   receiving_amount  Decimal?  @db.Decimal(10, 2)
+  to_hand_ratio     Decimal?   @db.Decimal(10, 2) 
   capital           Decimal   @db.Decimal(10, 2) 
   interest          Decimal   @db.Decimal(10, 2) 
   due_start_date    DateTime

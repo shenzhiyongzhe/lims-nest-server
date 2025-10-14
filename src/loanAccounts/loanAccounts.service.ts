@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { LoanAccount, RepaymentStatus } from '@prisma/client';
+import { LoanAccount, RepaymentStatus, User } from '@prisma/client';
 import { CreateLoanAccountDto } from './dto/create-loanAccount.dto';
 
 @Injectable()
@@ -8,7 +8,7 @@ export class LoanAccountsService {
   constructor(private readonly prisma: PrismaService) {}
 
   findAll(): Promise<LoanAccount[]> {
-    return this.prisma.loanAccount.findMany();
+    return this.prisma.loanAccount.findMany({ include: { user: true } });
   }
 
   async create(
@@ -93,6 +93,34 @@ export class LoanAccountsService {
         user: true,
         repaymentSchedules: true,
       },
+    });
+  }
+
+  async findGroupedByUser(): Promise<
+    Array<{ user: User; loanAccounts: LoanAccount[] }>
+  > {
+    const loans = await this.prisma.loanAccount.findMany({
+      include: { user: true },
+      orderBy: { user_id: 'asc' },
+    });
+    const map = new Map<number, { user: User; loanAccounts: LoanAccount[] }>();
+    for (const loan of loans) {
+      const user = loan.user as unknown as User;
+      const group = map.get(loan.user_id);
+      if (!group) {
+        map.set(loan.user_id, { user, loanAccounts: [loan] });
+      } else {
+        group.loanAccounts.push(loan);
+      }
+    }
+    return Array.from(map.values());
+  }
+
+  findByUserId(userId: number): Promise<LoanAccount[]> {
+    return this.prisma.loanAccount.findMany({
+      where: { user_id: userId },
+      include: { user: true },
+      orderBy: { created_at: 'desc' },
     });
   }
 }

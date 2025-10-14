@@ -24,6 +24,11 @@ export class CreateLoanAccountDto {
 
   @IsNumber()
   @IsPositive()
+  @Max(1000000)
+  to_hand_ratio: number;
+
+  @IsNumber()
+  @IsPositive()
   capital: number;
 
   @IsNumber()

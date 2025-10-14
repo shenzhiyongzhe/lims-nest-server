@@ -5,9 +5,8 @@ import type { Response } from 'express';
 
 interface OrderPayload {
   id: string;
-  share_id: string;
   customer_id: number;
-  loan_id: number;
+  loan_id: string;
   amount: number | string;
   payment_periods: number;
   payment_method: PaymentMethod;
@@ -75,7 +74,7 @@ export class EventsService {
     await this.broadcastOrder(data);
 
     const customerId = Number(data.customer_id);
-    const loanId = Number(data.loan_id);
+    const loanId = data.loan_id;
     const amount = data.amount;
     const paymentPeriods = Number(data.payment_periods ?? 0);
     const paymentMethod = data.payment_method;
@@ -86,7 +85,6 @@ export class EventsService {
       where: { id: data.id },
       create: {
         id: data.id,
-        share_id: data.share_id,
         customer_id: customerId,
         loan_id: loanId,
         amount,
@@ -96,7 +94,6 @@ export class EventsService {
         expires_at: expiresAt,
       },
       update: {
-        share_id: data.share_id,
         customer_id: customerId,
         loan_id: loanId,
         amount,
@@ -156,16 +153,14 @@ export class EventsService {
       await this.prisma.order.upsert({
         where: { id },
         update: {
-          share_id: order.share_id,
           payee_id: payeeId,
           status: 'grabbed',
           updated_at: new Date(),
         },
         create: {
           id,
-          share_id: order.share_id,
           customer_id: customerId,
-          loan_id: Number(order.loan_id),
+          loan_id: order.loan_id,
           amount: order.amount,
           payment_periods: Number(order.payment_periods ?? 0),
           payment_method: order.payment_method,
@@ -186,7 +181,6 @@ export class EventsService {
         type: 'order_grabbed',
         data: {
           id,
-          share_id: order.share_id,
           payeeId,
           payeeName: payee.username,
         },

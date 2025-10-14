@@ -7,7 +7,7 @@ import { RepaymentScheduleResponseDto } from './dto/repayment-schedule-response.
 export class RepaymentSchedulesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findByLoanId(loanId: number): Promise<RepaymentSchedule[]> {
+  async findByLoanId(loanId: string): Promise<RepaymentSchedule[]> {
     return this.prisma.repaymentSchedule.findMany({
       where: {
         loan_id: loanId,

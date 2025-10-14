@@ -1,14 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../../prisma/prisma.service';
-import { RepaymentStatus } from '@prisma/client';
+import { RepaymentScheduleStatus } from '@prisma/client';
 
 @Injectable()
 export class ScheduleStatusService {
   private readonly logger = new Logger(ScheduleStatusService.name);
   constructor(private readonly prisma: PrismaService) {}
 
-  // 每5分钟检查一次还款计划的状态并更新（pending->active->overdue/overtime）
+  // 每5分钟检查一次还款计划的状态并更新（pending->active->overdue）
   @Cron(CronExpression.EVERY_5_MINUTES)
   async updateRepaymentScheduleStatuses() {
     const now = new Date();
@@ -18,9 +18,9 @@ export class ScheduleStatusService {
       where: {
         due_start_date: { lte: now },
         due_end_date: { gt: now },
-        status: { in: ['pending', 'overtime'] },
+        status: { in: ['pending', 'active'] },
       },
-      data: { status: 'active' as RepaymentStatus },
+      data: { status: 'active' as RepaymentScheduleStatus },
     });
 
     // 逾期：超过结束时间未支付
@@ -29,17 +29,7 @@ export class ScheduleStatusService {
         due_end_date: { lte: now },
         status: { in: ['pending', 'active'] },
       },
-      data: { status: 'overdue' as RepaymentStatus },
-    });
-
-    // 超时（overtime）：到期当日但未付款，可根据业务调整，这里示例为到期前3小时标记
-    const threeHoursLater = new Date(now.getTime() + 3 * 60 * 60 * 1000);
-    await this.prisma.repaymentSchedule.updateMany({
-      where: {
-        due_end_date: { lte: threeHoursLater, gt: now },
-        status: 'active',
-      },
-      data: { status: 'overtime' as RepaymentStatus },
+      data: { status: 'overdue' as RepaymentScheduleStatus },
     });
 
     this.logger.log('Repayment schedules status updated');

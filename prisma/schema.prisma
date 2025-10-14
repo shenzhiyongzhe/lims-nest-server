@@ -45,23 +45,30 @@ model Admin {
   updatedAt    DateTime? @updatedAt
 
   // 添加关系
-  shareLinks   ShareLink[]
   payees       Payee[]
 
   @@map("admins")
 }
 
 // 复用的枚举（还款状态）
-
-enum RepaymentStatus {
+enum LoanAccountStatus {
   pending
   active
-  paid
-  overtime
   overdue
+  paid_off
+  negotiated
+  to_be_processed
+  blacklist
+}
+
+enum RepaymentScheduleStatus {
+  pending
+  active
+  overdue
+  paid
 }
 model LoanAccount {
-  id                Int       @id @default(autoincrement()) @db.Int
+  id                String    @id @default(cuid())
   user_id           Int      
   loan_amount       Decimal   @db.Decimal(10, 2) 
   receiving_amount  Decimal?  @db.Decimal(10, 2)
@@ -70,7 +77,7 @@ model LoanAccount {
   interest          Decimal   @db.Decimal(10, 2) 
   due_start_date    DateTime
   due_end_date      DateTime
-  status            RepaymentStatus  @default(pending)
+  status            LoanAccountStatus  @default(pending)
   handling_fee      Decimal   @db.Decimal(10, 2)
   total_periods     Int
   repaid_periods    Int       @default(0)
@@ -93,14 +100,14 @@ model LoanAccount {
 
 model RepaymentSchedule {
   id             Int              @id @default(autoincrement())
-  loan_id        Int
+  loan_id        String
   period         Int
   due_start_date DateTime
   due_end_date   DateTime
   due_amount     Decimal          @db.Decimal(10, 2)
   capital        Decimal?         @db.Decimal(10, 2)
   interest       Decimal?         @db.Decimal(10, 2)
-  status         RepaymentStatus  @default(pending)
+  status         RepaymentScheduleStatus  @default(pending)
   paid_amount    Decimal?         @db.Decimal(10, 2)
   paid_at        DateTime?
 
@@ -117,7 +124,7 @@ enum PaymentMethod{
 }
 model RepaymentRecord {
   id              Int @id @default(autoincrement())
-  loan_id         Int 
+  loan_id         String 
   user_id         Int
   paid_amount     Decimal? @db.Decimal(10, 2)
   paid_at         DateTime @default(now())
@@ -137,7 +144,7 @@ model RepaymentRecord {
 model OverdueRecord {
   id           Int      @id @default(autoincrement())
   user_id      Int
-  loan_id      Int
+  loan_id      String
   schedule_id  Int      @unique
   collector    String   @db.VarChar(10)
   overdue_date DateTime
@@ -169,21 +176,7 @@ model Payee {
   @@map("payees")
 }
 
-// 分享链接表
-model ShareLink {
-  share_id     String   @id @db.VarChar(8) // 8位短ID
-  schedule_ids String   @db.Text // JSON数组存储schedule_id列表
-  summary      String   @db.Text // JSON存储统计信息
-  expires_at   DateTime // 过期时间
-  created_at   DateTime @default(now())
-  updated_at   DateTime? @updatedAt
-  
-  // 可选：关联到创建者
-  created_by   Int? // 创建者ID（管理员ID）
-  admin        Admin? @relation(fields: [created_by], references: [id])
-  orders       Order[]
-  @@map("share_links")
-}
+
 model QrCode {
   id           Int      @id @default(autoincrement())
   payee_id            Int
@@ -196,12 +189,18 @@ model QrCode {
   @@map("qr_codes")
 }
 
+enum OrderStatus {
+  pending
+  grabbed
+  completed
+  expired
+  cancelled
+}
 // 在现有schema基础上添加订单表
 model Order {
-  id              String @id
-  share_id        String
+  id              String @id @default(cuid())
   customer_id     Int
-  loan_id         Int
+  loan_id         String
   amount          Decimal  @db.Decimal(10, 2)
   payment_periods  Int
   payment_method  PaymentMethod
@@ -214,7 +213,6 @@ model Order {
 
   customer        User     @relation(fields: [customer_id], references: [id])
   payee           Payee?   @relation(fields: [payee_id], references: [id])
-  share_link      ShareLink @relation(fields: [share_id], references: [share_id], onDelete: Cascade, onUpdate: Cascade)
   repaymentRecords RepaymentRecord[]
 
 
@@ -225,13 +223,7 @@ model Order {
 
 }
 
-enum OrderStatus {
-  pending
-  grabbed
-  completed
-  expired
-  cancelled
-}
+
 
 // 反馈类型
 enum FeedbackType {

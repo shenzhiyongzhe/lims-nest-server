@@ -12,6 +12,7 @@ async function bootstrap() {
       'http://localhost:3000',
       'http://localhost:3001',
       'http://127.0.0.1:3000',
+      'http://117.72.155.71',
     ],
     credentials: true, // 允许发送cookie
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],

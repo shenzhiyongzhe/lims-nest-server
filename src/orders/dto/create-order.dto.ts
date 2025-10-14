@@ -15,17 +15,12 @@ export class CreateOrderDto {
   @Length(1, 64)
   id?: string;
 
-  @IsString()
-  @Length(1, 10)
-  share_id: string;
-
   @IsNumber()
   @IsPositive()
   customer_id: number;
 
-  @IsNumber()
-  @IsPositive()
-  loan_id: number;
+  @IsString()
+  loan_id: string;
 
   @IsNumber()
   @IsPositive()

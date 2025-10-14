@@ -11,7 +11,7 @@ export class OverdueService {
   @Cron('5 6 * * *')
   async generateDailyOverdueRecords() {
     const today = new Date();
-    today.setHours(14, 0, 0, 0);
+    today.setHours(6, 0, 0, 0);
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 

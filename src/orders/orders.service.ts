@@ -133,44 +133,6 @@ export class OrdersService {
           },
         });
 
-        const shareLink = await tx.shareLink.findUnique({
-          where: { share_id: updated.share_id ?? undefined },
-          select: { schedule_ids: true },
-        });
-
-        if (shareLink?.schedule_ids) {
-          const ids = JSON.parse(shareLink.schedule_ids) as number[];
-          if (Array.isArray(ids) && ids.length) {
-            const schedules = await tx.repaymentSchedule.findMany({
-              where: {
-                id: { in: ids },
-                status: {
-                  in: ['pending', 'active', 'overdue', 'overtime'],
-                },
-              },
-              orderBy: { period: 'asc' },
-            });
-
-            const portion =
-              schedules.length > 0
-                ? Number((Number(updated.amount) / schedules.length).toFixed(2))
-                : 0;
-
-            await Promise.all(
-              schedules.map((s) =>
-                tx.repaymentSchedule.update({
-                  where: { id: s.id },
-                  data: {
-                    status: 'paid',
-                    paid_amount: portion || Number(updated.amount),
-                    paid_at: paidAtStr,
-                  },
-                }),
-              ),
-            );
-          }
-        }
-
         const agg = await tx.repaymentSchedule.aggregate({
           where: { loan_id: updated.loan_id, status: 'paid' },
           _sum: { paid_amount: true },

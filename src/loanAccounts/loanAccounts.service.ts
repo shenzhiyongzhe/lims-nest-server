@@ -1,6 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { LoanAccount, RepaymentStatus, User } from '@prisma/client';
+import {
+  LoanAccount,
+  LoanAccountStatus,
+  RepaymentScheduleStatus,
+  User,
+} from '@prisma/client';
 import { CreateLoanAccountDto } from './dto/create-loanAccount.dto';
 
 @Injectable()
@@ -26,8 +31,8 @@ export class LoanAccountsService {
     // 设置时间
     const startDate = new Date(due_start_date);
     const endDate = new Date(data.due_end_date);
-    startDate.setHours(14, 0, 0, 0);
-    endDate.setHours(14, 0, 0, 0);
+    startDate.setHours(6, 0, 0, 0);
+    endDate.setHours(6, 0, 0, 0);
 
     // 使用事务：创建贷款记录并批量创建还款计划
     const loan = await this.prisma.$transaction(async (tx) => {
@@ -48,7 +53,7 @@ export class LoanAccountsService {
           daily_repayment: Number(daily_repayment),
           capital: Number(capital),
           interest: Number(interest),
-          status: data.status as RepaymentStatus,
+          status: data.status as LoanAccountStatus,
           repaid_periods: 0,
           created_by: createdBy,
         },
@@ -72,7 +77,7 @@ export class LoanAccountsService {
           due_amount: perAmount,
           capital: capital ? Number(capital) : null,
           interest: interest ? Number(interest) : null,
-          status: data.status as RepaymentStatus,
+          status: data.status as RepaymentScheduleStatus,
         };
       });
 
@@ -86,7 +91,7 @@ export class LoanAccountsService {
     return loan;
   }
 
-  findById(id: number): Promise<LoanAccount | null> {
+  findById(id: string): Promise<LoanAccount | null> {
     return this.prisma.loanAccount.findUnique({
       where: { id },
       include: {

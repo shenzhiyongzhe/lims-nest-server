@@ -36,7 +36,7 @@ export class RepaymentSchedulesController {
   }
   @Get('loan/:loanId')
   async findByLoanId(
-    @Param('loanId', ParseIntPipe) loanId: number,
+    @Param('loanId', ParseIntPipe) loanId: string,
   ): Promise<ApiResponseDto> {
     const loan = await this.loanAccountsService.findById(loanId);
     return ResponseHelper.success(loan, '获取还款计划成功');

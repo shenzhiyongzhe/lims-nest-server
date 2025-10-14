@@ -78,25 +78,6 @@ export class PayeesController {
     const resData = this.payeesService.toResponse(payee);
     return ResponseHelper.success(resData, '创建收款人成功');
   }
-  @Put(':id')
-  async update(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() data: CreatePayeeDto,
-  ): Promise<ApiResponseDto> {
-    const payee = await this.payeesService.update(id, data);
-    const resData = this.payeesService.toResponse(payee);
-    return ResponseHelper.success(resData, '更新收款人成功');
-  }
-  @Delete(':id')
-  async delete(@Param('id', ParseIntPipe) id: number): Promise<ApiResponseDto> {
-    const payee = await this.payeesService.delete(id);
-    if (!payee) {
-      throw new NotFoundException('收款人不存在');
-    }
-    const resData = this.payeesService.toResponse(payee);
-    return ResponseHelper.success(resData, '删除收款人成功');
-  }
-
   @UseGuards(AuthGuard, RolesGuard)
   @Post('upload')
   @UseInterceptors(FileInterceptor('file'))
@@ -117,8 +98,25 @@ export class PayeesController {
       );
       return ResponseHelper.success(created, '上传并创建二维码成功');
     } catch (error: any) {
-      if (error instanceof BadRequestException) throw error;
-      throw new BadRequestException('上传失败');
+      return ResponseHelper.error(error.message, 400);
     }
+  }
+  @Put(':id')
+  async update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() data: CreatePayeeDto,
+  ): Promise<ApiResponseDto> {
+    const payee = await this.payeesService.update(id, data);
+    const resData = this.payeesService.toResponse(payee);
+    return ResponseHelper.success(resData, '更新收款人成功');
+  }
+  @Delete(':id')
+  async delete(@Param('id', ParseIntPipe) id: number): Promise<ApiResponseDto> {
+    const payee = await this.payeesService.delete(id);
+    if (!payee) {
+      throw new NotFoundException('收款人不存在');
+    }
+    const resData = this.payeesService.toResponse(payee);
+    return ResponseHelper.success(resData, '删除收款人成功');
   }
 }

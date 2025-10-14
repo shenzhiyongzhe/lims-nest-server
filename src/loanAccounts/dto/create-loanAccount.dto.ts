@@ -9,7 +9,7 @@ import {
   Length,
   IsPositive,
 } from 'class-validator';
-import { RepaymentStatus } from '@prisma/client';
+import { RepaymentScheduleStatus } from '@prisma/client';
 
 export class CreateLoanAccountDto {
   @IsNumber()
@@ -41,9 +41,9 @@ export class CreateLoanAccountDto {
   @IsDateString()
   due_end_date: string;
 
-  @IsEnum(RepaymentStatus)
+  @IsEnum(RepaymentScheduleStatus)
   @IsOptional()
-  status?: RepaymentStatus;
+  status?: RepaymentScheduleStatus;
 
   @IsNumber()
   @IsPositive()

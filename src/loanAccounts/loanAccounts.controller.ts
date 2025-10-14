@@ -14,12 +14,14 @@ import { RolesGuard } from '../auth/roles.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { ResponseHelper } from 'src/common/response-helper';
 import { ApiResponseDto } from 'src/common/dto/api-response.dto';
+import { Roles } from 'src/auth/roles.decorator';
+import { ManagementRoles } from '@prisma/client';
 
 @Controller('loan-accounts')
-@UseGuards(AuthGuard, RolesGuard)
 export class LoanAccountsController {
   constructor(private readonly loanAccountsService: LoanAccountsService) {}
-
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(ManagementRoles.管理员)
   @Get()
   async findAll(): Promise<ApiResponseDto> {
     const loans = await this.loanAccountsService.findAll();
@@ -41,9 +43,7 @@ export class LoanAccountsController {
   }
 
   @Get(':id')
-  async findById(
-    @Param('id', ParseIntPipe) id: number,
-  ): Promise<ApiResponseDto> {
+  async findById(@Param('id') id: string): Promise<ApiResponseDto> {
     const loan = await this.loanAccountsService.findById(id);
     if (!loan) {
       return ResponseHelper.error('贷款记录不存在', 400);
@@ -51,6 +51,7 @@ export class LoanAccountsController {
     return ResponseHelper.success(loan, '获取贷款记录成功');
   }
 
+  @UseGuards(AuthGuard, RolesGuard)
   @Post()
   async create(
     @Body() body: CreateLoanAccountDto,

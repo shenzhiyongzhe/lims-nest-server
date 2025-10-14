@@ -6,7 +6,6 @@ import { UsersModule } from './users/users.module';
 import { AdminsModule } from './admins/admins.module';
 import { LoanAccountsModule } from './loanAccounts/loanAccounts.module';
 import { RepaymentSchedulesModule } from './repayment-schedules/repayment-schedules.module';
-import { ShareLinksModule } from './share-links/share-links.module';
 import { AuthModule } from './auth/auth.module';
 import { EventsModule } from './events/events.module';
 import { PayeesModule } from './payees/payees.module';
@@ -15,6 +14,7 @@ import { join } from 'path';
 import { OrdersModule } from './orders/orders.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { CronJobsModule } from './cron/cron.module';
+import { StatisticsModule } from './statistics/statistics.module';
 @Module({
   imports: [
     ScheduleModule.forRoot(),
@@ -27,12 +27,12 @@ import { CronJobsModule } from './cron/cron.module';
     AdminsModule,
     LoanAccountsModule,
     RepaymentSchedulesModule,
-    ShareLinksModule,
     AuthModule,
     PayeesModule,
     EventsModule,
     OrdersModule,
     CronJobsModule,
+    StatisticsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

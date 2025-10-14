@@ -11,7 +11,7 @@ import {
 import type { Request, Response } from 'express';
 import { EventsService } from './events.service';
 import { PaymentMethod } from '@prisma/client';
-
+import { randomUUID } from 'crypto';
 @Controller('events')
 export class EventsController {
   constructor(private readonly eventsService: EventsService) {}
@@ -38,24 +38,20 @@ export class EventsController {
     if (!data || typeof data !== 'object') {
       throw new BadRequestException('Invalid order payload');
     }
+    const id = randomUUID();
     const d = data as Record<string, unknown>;
-    const id = String(d.id);
     const customer_id = Number(d.customer_id);
-    const loan_id = Number(d.loan_id);
+    const loan_id = d.loan_id as string;
     const amount = d.amount as string | number; // 保持原始类型，可能是string或number
     const payment_periods = Number(d.payment_periods);
     const payment_method_input = d.payment_method;
-    const share_id = typeof d.share_id === 'string' ? d.share_id : '';
     const remark = d.remark as string | null | undefined;
     const customer = (d.customer as { address?: string } | undefined) ?? {};
 
-    if (!id || typeof id !== 'string') {
-      throw new BadRequestException('Invalid id');
-    }
     if (!Number.isFinite(customer_id)) {
       throw new BadRequestException('Invalid customer_id');
     }
-    if (!Number.isFinite(loan_id)) {
+    if (!loan_id) {
       throw new BadRequestException('Invalid loan_id');
     }
     if (amount === null || amount === undefined) {
@@ -64,9 +60,6 @@ export class EventsController {
     if (!Number.isFinite(payment_periods)) {
       throw new BadRequestException('Invalid payment_periods');
     }
-    if (!share_id) {
-      throw new BadRequestException('Invalid share_id');
-    }
     const pm = String(payment_method_input);
     if (pm !== 'wechat_pay' && pm !== 'ali_pay') {
       throw new BadRequestException('Invalid payment_method');
@@ -74,7 +67,6 @@ export class EventsController {
 
     return {
       id,
-      share_id,
       customer_id,
       loan_id,
       amount,
@@ -157,12 +149,7 @@ export class EventsController {
     const data = parsedBody?.data;
 
     if (type === 'submit_order') {
-      if (
-        !data ||
-        typeof data !== 'object' ||
-        data === null ||
-        !('id' in data)
-      ) {
+      if (!data || typeof data !== 'object' || data === null) {
         throw new BadRequestException('Invalid order payload');
       }
       const payload = this.buildSubmitOrderPayload(data);
@@ -170,7 +157,7 @@ export class EventsController {
     }
 
     if (type === 'grab_order') {
-      const dataObj = data as { id?: unknown; admin_id?: unknown } | undefined;
+      const dataObj = data as { id: string; admin_id: number };
       const adminId = dataObj?.admin_id ? Number(dataObj.admin_id) : undefined;
       if (!adminId || !Number.isFinite(adminId)) {
         throw new BadRequestException(

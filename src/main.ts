@@ -3,6 +3,7 @@ import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import cookieParser from 'cookie-parser';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
+import { IoAdapter } from '@nestjs/platform-socket.io';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
@@ -32,6 +33,9 @@ async function bootstrap() {
 
   // 注册全局响应拦截器
   app.useGlobalInterceptors(new ResponseInterceptor());
+
+  // 配置WebSocket支持
+  app.useWebSocketAdapter(new IoAdapter(app));
 
   await app.listen(process.env.PORT ?? 3000);
   // 捕获退出信号（Ctrl+C 或 nodemon 重启）

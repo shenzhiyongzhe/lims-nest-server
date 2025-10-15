@@ -8,6 +8,7 @@ import { LoanAccountsModule } from './loanAccounts/loanAccounts.module';
 import { RepaymentSchedulesModule } from './repayment-schedules/repayment-schedules.module';
 import { AuthModule } from './auth/auth.module';
 import { EventsModule } from './events/events.module';
+import { ChatModule } from './chat/chat.module';
 import { PayeesModule } from './payees/payees.module';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'path';
@@ -32,6 +33,7 @@ import { LoanAccountRolesModule } from './loanAccountRoles/loanAccountRoles.modu
     AuthModule,
     PayeesModule,
     EventsModule,
+    ChatModule,
     OrdersModule,
     CronJobsModule,
     StatisticsModule,

@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaymentMethod } from '@prisma/client';
-import type { Response } from 'express';
+import type { Socket } from 'socket.io';
 
 interface OrderPayload {
   id: string;
@@ -16,7 +16,7 @@ interface OrderPayload {
 
 @Injectable()
 export class EventsService {
-  private readonly sseConnections = new Map<string, Response>();
+  private readonly wsConnections = new Map<string, Socket>();
   private readonly payeeConnections = new Map<number, string>();
   private readonly customerConnections = new Map<number, string>();
   private readonly pendingOrders = new Map<string, OrderPayload>();
@@ -25,11 +25,11 @@ export class EventsService {
 
   addConnection(
     type: 'payee' | 'customer',
-    res: Response,
+    socket: Socket,
     opts: { payeeId?: number; userId?: number },
   ): string {
-    const connectionId = `${type}_${Date.now()}_${Math.random()}`;
-    this.sseConnections.set(connectionId, res);
+    const connectionId = socket.id;
+    this.wsConnections.set(connectionId, socket);
 
     if (type === 'payee' && opts.payeeId) {
       this.payeeConnections.set(opts.payeeId, connectionId);
@@ -52,7 +52,7 @@ export class EventsService {
     type: 'payee' | 'customer',
     opts: { payeeId?: number; userId?: number },
   ): void {
-    this.sseConnections.delete(connectionId);
+    this.wsConnections.delete(connectionId);
     if (type === 'payee' && opts.payeeId) {
       const mapped = this.payeeConnections.get(opts.payeeId);
       if (mapped === connectionId) this.payeeConnections.delete(opts.payeeId);
@@ -64,9 +64,13 @@ export class EventsService {
   }
 
   private sendToConnection(connectionId: string, event: unknown): void {
-    const res = this.sseConnections.get(connectionId);
-    if (!res) return;
-    res.write(`data: ${JSON.stringify(event)}\n\n`);
+    const socket = this.wsConnections.get(connectionId);
+    if (!socket) return;
+    socket.emit('message', event);
+  }
+
+  getCustomerConnectionId(userId: number): string | undefined {
+    return this.customerConnections.get(userId);
   }
 
   async submitOrder(data: OrderPayload) {
@@ -309,36 +313,31 @@ export class EventsService {
     const priorities = await this.calculatePayeePriority(orderData);
     console.log('📊 计算出的收款人优先级:', priorities.length, '个收款人');
 
-    for (const { payee, delay } of priorities) {
-      console.log(
-        `⏰ 收款人 ${payee.id} (${payee.username}) 将在 ${delay}ms 后收到通知`,
-      );
-      setTimeout(() => {
-        const connectionId = this.payeeConnections.get(payee.id);
-        console.log(`🔍 查找收款人 ${payee.id} 的连接ID:`, connectionId);
+    for (const { payee } of priorities) {
+      const connectionId = this.payeeConnections.get(payee.id);
+      console.log(`🔍 查找收款人 ${payee.id} 的连接ID:`, connectionId);
 
-        if (connectionId) {
-          const message = {
-            type: 'new_order',
-            data: {
-              id: orderData.id,
-              loan_id: orderData.loan_id,
-              customer_id: orderData.customer_id,
-              customer: orderData.customer,
-              payment_periods: orderData.payment_periods,
-              amount: orderData.amount,
-              payment_method: orderData.payment_method,
-              remark: orderData.remark,
-              timestamp: new Date().toISOString(),
-            },
-          };
+      if (connectionId) {
+        const message = {
+          type: 'new_order',
+          data: {
+            id: orderData.id,
+            loan_id: orderData.loan_id,
+            customer_id: orderData.customer_id,
+            customer: orderData.customer,
+            payment_periods: orderData.payment_periods,
+            amount: orderData.amount,
+            payment_method: orderData.payment_method,
+            remark: orderData.remark,
+            timestamp: new Date().toISOString(),
+          },
+        };
 
-          console.log(`📨 发送订单通知给收款人 ${payee.id}:`, message);
-          this.sendToConnection(connectionId, message);
-        } else {
-          console.log(`❌ 收款人 ${payee.id} 没有活跃连接`);
-        }
-      }, delay);
+        console.log(`📨 发送订单通知给收款人 ${payee.id}:`, message);
+        this.sendToConnection(connectionId, message);
+      } else {
+        console.log(`❌ 收款人 ${payee.id} 没有活跃连接`);
+      }
     }
   }
 
@@ -348,5 +347,18 @@ export class EventsService {
       select: { id: true },
     });
     return payee?.id ?? null;
+  }
+
+  async getOrderById(orderId: string) {
+    return this.prisma.order.findUnique({
+      where: { id: orderId },
+      select: {
+        id: true,
+        loan_id: true,
+        customer_id: true,
+        amount: true,
+        status: true,
+      },
+    });
   }
 }

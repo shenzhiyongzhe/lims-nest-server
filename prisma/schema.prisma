@@ -11,7 +11,7 @@ model User {
   id           Int      @id @default(autoincrement())
   username     String   @db.VarChar(10)
   password     String   @db.VarChar(32)
-  phone        String   @db.VarChar(11) 
+  phone        String   @db.VarChar(11)
   address      String   @db.VarChar(100)
   lv           String   @default("青铜用户") @db.VarChar(16)
   overtime     Int      @default(0)
@@ -23,6 +23,7 @@ model User {
   loanAccounts LoanAccount[]
   orders       Order[]
   repaymentRecords RepaymentRecord[]
+  chatSessionsAsUser ChatSession[] // 作为用户参与的聊天会话
   @@map("users")
 }
 
@@ -39,14 +40,15 @@ model Admin {
   id           Int      @id @default(autoincrement())
   username     String   @db.VarChar(10)
   password     String   @db.VarChar(32)
-  phone        String   @db.VarChar(11) 
-  role         ManagementRoles   
+  phone        String   @db.VarChar(11)
+  role         ManagementRoles
   createdAt    DateTime @default(now())
   updatedAt    DateTime? @updatedAt
 
   // 添加关系
   payees       Payee[]
   loanAccountRoles LoanAccountRole[]
+  chatSessionsAsAdmin ChatSession[] // 作为管理员参与的聊天会话
 
   @@map("admins")
 }
@@ -71,12 +73,12 @@ enum RepaymentScheduleStatus {
 }
 model LoanAccount {
   id                String    @id @default(cuid())
-  user_id           Int      
-  loan_amount       Decimal   @db.Decimal(10, 2) 
+  user_id           Int
+  loan_amount       Decimal   @db.Decimal(10, 2)
   receiving_amount  Decimal?  @db.Decimal(10, 2)
-  to_hand_ratio     Decimal?   @db.Decimal(10, 2) 
-  capital           Decimal   @db.Decimal(10, 2) 
-  interest          Decimal   @db.Decimal(10, 2) 
+  to_hand_ratio     Decimal?   @db.Decimal(10, 2)
+  capital           Decimal   @db.Decimal(10, 2)
+  interest          Decimal   @db.Decimal(10, 2)
   due_start_date    DateTime
   due_end_date      DateTime
   status            LoanAccountStatus  @default(pending)
@@ -90,7 +92,7 @@ model LoanAccount {
   lender            String    @db.VarChar(10)
   company_cost      Int       @default(0)
   created_at        DateTime  @default(now())
-  created_by        Int 
+  created_by        Int
   updated_at        DateTime? @updatedAt
 
   // 关系
@@ -98,6 +100,7 @@ model LoanAccount {
   repaymentSchedules RepaymentSchedule[]
   repaymentRecords RepaymentRecord[]
   loanAccountRoles LoanAccountRole[]
+  chatSessionsAsLoan ChatSession[] // 与此贷款相关的聊天会话
   @@map("loan_accounts")
 }
 
@@ -268,4 +271,51 @@ model Feedback {
 
   @@map("feedbacks")
   @@index([status, created_at])
+}
+
+// 聊天消息类型
+enum MessageType {
+  text
+  image
+}
+
+// 聊天会话表
+model ChatSession {
+  id          String   @id @default(cuid())
+  loan_id     String   // 关联的贷款ID
+  admin_id    Int      // 管理员ID
+  user_id     Int      // 用户ID
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+  last_message_at DateTime @default(now())
+
+  // 关系
+  loan_account LoanAccount @relation(fields: [loan_id], references: [id], onDelete: Cascade)
+  admin        Admin       @relation(fields: [admin_id], references: [id], onDelete: Cascade)
+  user         User        @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  messages     ChatMessage[]
+
+  @@unique([loan_id, admin_id, user_id])
+  @@map("chat_sessions")
+  @@index([admin_id, updated_at])
+  @@index([user_id, updated_at])
+}
+
+// 聊天消息表
+model ChatMessage {
+  id            String      @id @default(cuid())
+  session_id    String      // 聊天会话ID
+  sender_id     Int         // 发送者ID（可能是admin或user）
+  sender_type   String      @db.VarChar(10) // 'admin' 或 'user'
+  message_type  MessageType @default(text)
+  content       String      @db.Text // 文字内容或图片URL
+  is_read       Boolean     @default(false)
+  created_at    DateTime    @default(now())
+
+  // 关系
+  session ChatSession @relation(fields: [session_id], references: [id], onDelete: Cascade)
+
+  @@map("chat_messages")
+  @@index([session_id, created_at])
+  @@index([sender_id, created_at])
 }

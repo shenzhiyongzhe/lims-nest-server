@@ -1,14 +1,4 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Query,
-  Body,
-  Req,
-  Res,
-  BadRequestException,
-} from '@nestjs/common';
-import type { Request, Response } from 'express';
+import { Controller, Post, Body, BadRequestException } from '@nestjs/common';
 import { EventsService } from './events.service';
 import { PaymentMethod } from '@prisma/client';
 import { randomUUID } from 'crypto';
@@ -75,71 +65,6 @@ export class EventsController {
       remark: remark ?? null,
       customer,
     };
-  }
-
-  @Get()
-  async sse(
-    @Query('type') type: 'payee' | 'customer',
-    @Query('user_id') userIdQuery: string,
-    @Query('admin_id') adminIdQuery: string,
-    @Req() req: Request,
-    @Res() res: Response,
-  ) {
-    if (!type || (type !== 'payee' && type !== 'customer')) {
-      throw new BadRequestException('Missing or invalid type');
-    }
-
-    let payeeId: number | undefined;
-    if (type === 'payee') {
-      // 从查询参数获取admin_id
-      const adminId = adminIdQuery ? Number(adminIdQuery) : undefined;
-      if (!adminId || !Number.isFinite(adminId)) {
-        throw new BadRequestException('Missing or invalid admin_id');
-      }
-
-      const foundPayeeId = await this.eventsService.findPayeeIdByAdmin(adminId);
-      if (!foundPayeeId) {
-        throw new BadRequestException('该管理员未绑定收款人');
-      }
-      payeeId = foundPayeeId;
-    }
-    if (type === 'customer' && !userIdQuery) {
-      throw new BadRequestException('Missing user_id');
-    }
-
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    // CORS for SSE with credentials
-    const originHeader = req.headers.origin;
-    const origin = typeof originHeader === 'string' ? originHeader : undefined;
-    if (origin) res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-    // prevent proxies from buffering
-    res.setHeader('X-Accel-Buffering', 'no');
-
-    const userId = userIdQuery ? Number(userIdQuery) : undefined;
-
-    const connectionId = this.eventsService.addConnection(type, res, {
-      payeeId,
-      userId,
-    });
-
-    // initial connected message
-    res.write(
-      `data: ${JSON.stringify({
-        type: 'connected',
-        connectionId,
-        data: { payeeId, userId },
-      })}\n\n`,
-    );
-
-    req.on('close', () => {
-      this.eventsService.removeConnection(connectionId, type, {
-        payeeId,
-        userId,
-      });
-    });
   }
 
   @Post()

@@ -9,19 +9,30 @@ import {
   Put,
   Query,
   UnauthorizedException,
+  UseGuards,
 } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { PaginationQueryDto } from './dto/pagination-query.dto';
 import { ResponseHelper } from 'src/common/response-helper';
 import { ApiResponseDto } from 'src/common/dto/api-response.dto';
+import { AuthGuard } from 'src/auth/auth.guard';
+import { RolesGuard } from 'src/auth/roles.guard';
+import { Roles } from 'src/auth/roles.decorator';
+import { ManagementRoles } from '@prisma/client';
+import { CurrentUser } from 'src/auth/current-user.decorator';
+
+@UseGuards(AuthGuard, RolesGuard)
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
   @Get()
-  async findAll(@Query() query: PaginationQueryDto): Promise<ApiResponseDto> {
-    const result = await this.usersService.findAll(query);
+  async findAll(
+    @Query() query: PaginationQueryDto,
+    @CurrentUser() user: { id: number },
+  ): Promise<ApiResponseDto> {
+    const result = await this.usersService.findAll(query, user.id);
     const data = {
       ...result,
       data: result.data.map((u) => this.usersService.toResponse(u)),
@@ -37,6 +48,8 @@ export class UsersController {
     const data = this.usersService.toResponse(user);
     return ResponseHelper.success(data, '获取用户成功');
   }
+  @Roles(ManagementRoles.管理员)
+  @Roles(ManagementRoles.风控人)
   @Post()
   async create(@Body() body: CreateUserDto): Promise<ApiResponseDto> {
     const user = await this.usersService.create(body);

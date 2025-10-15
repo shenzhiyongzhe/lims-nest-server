@@ -24,7 +24,7 @@ export class StatisticsService {
   ): Promise<StatisticsResult> {
     const now = new Date();
     const todayStart = new Date(now);
-    todayStart.setHours(0, 0, 0, 0);
+    todayStart.setHours(6, 0, 0, 0);
     const todayEnd = new Date(todayStart);
     todayEnd.setDate(todayEnd.getDate() + 1);
 
@@ -33,6 +33,9 @@ export class StatisticsService {
 
     // 构建基础查询条件（根据角色过滤）
     const loanAccountWhere = await this.buildLoanAccountFilter(adminId, role);
+
+    console.log(`todayStart: ${todayStart}`);
+    console.log(`todayEnd: ${todayEnd}`);
 
     // 并行执行所有查询以提高性能
     const [
@@ -182,7 +185,7 @@ export class StatisticsService {
         status: { in: ['pending', 'active'] },
         due_end_date: {
           gte: startDate,
-          lt: endDate,
+          lte: endDate,
         },
         loan_account: loanAccountWhere,
       },

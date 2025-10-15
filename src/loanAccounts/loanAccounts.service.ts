@@ -65,10 +65,10 @@ export class LoanAccountsService {
       const rows = Array.from({ length: periods }).map((_, idx) => {
         const d = new Date(created.due_start_date);
         d.setDate(d.getDate() + idx);
-        d.setHours(14, 0, 0, 0);
+        d.setHours(6, 0, 0, 0);
         const end = new Date(d);
         end.setDate(end.getDate() + 1);
-        end.setHours(14, 0, 0, 0);
+        end.setHours(6, 0, 0, 0);
         return {
           loan_id: created.id,
           period: idx + 1,
@@ -85,6 +85,51 @@ export class LoanAccountsService {
         await tx.repaymentSchedule.createMany({ data: rows });
       }
 
+      const collector = await tx.admin.findFirst({
+        where: {
+          username: data.collector,
+        },
+      });
+      const risk_controller = await tx.admin.findFirst({
+        where: {
+          username: data.risk_controller,
+        },
+      });
+      const payee = await tx.admin.findFirst({
+        where: {
+          username: data.payee,
+        },
+      });
+      const lender = await tx.admin.findFirst({
+        where: {
+          username: data.lender,
+        },
+      });
+      await tx.loanAccountRole.createMany({
+        data: [
+          {
+            loan_account_id: created.id,
+            admin_id: collector?.id || 0,
+            role_type: 'collector',
+          },
+          {
+            loan_account_id: created.id,
+            admin_id: risk_controller?.id || 0,
+            role_type: 'risk_controller',
+          },
+          {
+            loan_account_id: created.id,
+            admin_id: payee?.id || 0,
+            role_type: 'payee',
+          },
+          {
+            loan_account_id: created.id,
+            admin_id: lender?.id || 0,
+            role_type: 'lender',
+          },
+        ],
+        skipDuplicates: true,
+      });
       return created;
     });
 
@@ -101,10 +146,12 @@ export class LoanAccountsService {
     });
   }
 
-  async findGroupedByUser(): Promise<
-    Array<{ user: User; loanAccounts: LoanAccount[] }>
-  > {
+  async findGroupedByUser(
+    status?: LoanAccountStatus[],
+  ): Promise<Array<{ user: User; loanAccounts: LoanAccount[] }>> {
+    const where = status && status.length > 0 ? { status: { in: status } } : {};
     const loans = await this.prisma.loanAccount.findMany({
+      where,
       include: { user: true },
       orderBy: { user_id: 'asc' },
     });

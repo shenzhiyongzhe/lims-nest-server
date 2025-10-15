@@ -10,18 +10,24 @@ export class UsersService {
 
   async findAll(
     query: PaginationQueryDto,
+    userId: number,
   ): Promise<PaginatedResponseDto<User>> {
     const { page = 1, pageSize = 20, search } = query;
     const skip = (page - 1) * pageSize;
+    const admin = await this.prisma.admin.findUnique({
+      where: { id: userId },
+      select: { id: true, role: true, username: true },
+    });
 
-    const where = search
-      ? {
-          username: {
-            contains: search,
-          },
-        }
-      : {};
-
+    if (!admin) {
+      throw new Error('管理员不存在');
+    }
+    const where = {} as any;
+    if (search) {
+      where.username = {
+        contains: search,
+      };
+    }
     const [users, total] = await Promise.all([
       this.prisma.user.findMany({
         where,

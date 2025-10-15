@@ -6,6 +6,7 @@ import {
   Param,
   ParseIntPipe,
   UseGuards,
+  Query,
 } from '@nestjs/common';
 import { LoanAccountsService } from './loanAccounts.service';
 import { CreateLoanAccountDto } from './dto/create-loanAccount.dto';
@@ -15,7 +16,7 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import { ResponseHelper } from 'src/common/response-helper';
 import { ApiResponseDto } from 'src/common/dto/api-response.dto';
 import { Roles } from 'src/auth/roles.decorator';
-import { ManagementRoles } from '@prisma/client';
+import { LoanAccountStatus, ManagementRoles } from '@prisma/client';
 
 @Controller('loan-accounts')
 export class LoanAccountsController {
@@ -27,10 +28,25 @@ export class LoanAccountsController {
     const loans = await this.loanAccountsService.findAll();
     return ResponseHelper.success(loans, '获取贷款记录成功');
   }
-
+  @Roles(
+    ManagementRoles.管理员,
+    ManagementRoles.负责人,
+    ManagementRoles.风控人,
+    ManagementRoles.收款人,
+  )
   @Get('grouped-by-user')
-  async groupedByUser(): Promise<ApiResponseDto> {
-    const rows = await this.loanAccountsService.findGroupedByUser();
+  async groupedByUser(
+    @Query('status') status: LoanAccountStatus,
+  ): Promise<ApiResponseDto> {
+    let statusArray: LoanAccountStatus[] = [];
+    if (status) {
+      if (status === 'unsettled') {
+        statusArray = ['pending', 'active', 'overdue'];
+      } else {
+        statusArray = [status];
+      }
+    }
+    const rows = await this.loanAccountsService.findGroupedByUser(statusArray);
     return ResponseHelper.success(rows, '按用户分组获取成功');
   }
 

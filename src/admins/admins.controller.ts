@@ -64,9 +64,10 @@ export class AdminController {
     // 设置cookie
     res.cookie('admin', JSON.stringify({ id: admin.id, role: admin.role }), {
       httpOnly: true, // 防止XSS攻击
-      // secure: process.env.NODE_ENV === 'production', // 生产环境使用HTTPS
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 24小时过期
-      sameSite: 'strict', // CSRF保护
+      secure: process.env.NODE_ENV === 'production', // 生产环境使用HTTPS
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7天过期
+      sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax', // 开发用lax
+      path: '/',
     });
 
     const data = this.adminService.toResponse(admin);
@@ -77,63 +78,6 @@ export class AdminController {
   logout(@Res({ passthrough: true }) res: Response): { message: string } {
     res.clearCookie('admin');
     return { message: '登出成功' };
-  }
-
-  @Get('verify')
-  async verify(@Res({ passthrough: true }) res: Response): Promise<{
-    message: string;
-    valid: boolean;
-    data?: {
-      id: number;
-      username: string;
-      phone: string;
-      role: ManagementRoles;
-    };
-  }> {
-    try {
-      const adminId = res.req.cookies?.admin as string;
-      if (!adminId) {
-        return {
-          message: '未登录',
-          valid: false,
-        };
-      }
-
-      if (!adminId) {
-        return {
-          message: '未登录',
-          valid: false,
-        };
-      }
-
-      const admin = await this.adminService.findById(parseInt(adminId));
-
-      if (!admin) {
-        // 清除无效的cookie
-        res.clearCookie('admin');
-        return {
-          message: '用户不存在',
-          valid: false,
-        };
-      }
-
-      return {
-        message: '验证成功',
-        valid: true,
-        data: {
-          id: admin.id,
-          username: admin.username,
-          phone: admin.phone,
-          role: admin.role,
-        },
-      };
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : '未知错误';
-      return {
-        message: errorMessage || ('验证失败' as string),
-        valid: false,
-      };
-    }
   }
 
   @Get(':id')

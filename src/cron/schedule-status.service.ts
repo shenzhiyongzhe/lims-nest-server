@@ -9,7 +9,8 @@ export class ScheduleStatusService {
   constructor(private readonly prisma: PrismaService) {}
 
   // 每5分钟检查一次还款计划的状态并更新（pending->active->overdue）
-  @Cron(CronExpression.EVERY_5_MINUTES)
+  // @Cron(CronExpression.EVERY_5_MINUTES)
+  @Cron('5 6 * * *')
   async updateRepaymentScheduleStatuses() {
     const now = new Date();
 

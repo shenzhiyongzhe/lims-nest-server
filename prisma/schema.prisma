@@ -46,6 +46,7 @@ model Admin {
 
   // 添加关系
   payees       Payee[]
+  loanAccountRoles LoanAccountRole[]
 
   @@map("admins")
 }
@@ -55,7 +56,8 @@ enum LoanAccountStatus {
   pending
   active
   overdue
-  paid_off
+  settled
+  unsettled
   negotiated
   to_be_processed
   blacklist
@@ -95,7 +97,22 @@ model LoanAccount {
   user User @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
   repaymentSchedules RepaymentSchedule[]
   repaymentRecords RepaymentRecord[]
+  loanAccountRoles LoanAccountRole[]
   @@map("loan_accounts")
+}
+
+model LoanAccountRole {
+  id            Int      @id @default(autoincrement())
+  loan_account_id String
+  admin_id      Int
+  role_type     String   @db.VarChar(20) // 'collector', 'risk_controller', 'payee', 'lender'
+  created_at    DateTime @default(now())
+
+  loan_account  LoanAccount @relation(fields: [loan_account_id], references: [id], onDelete: Cascade)
+  admin         Admin @relation(fields: [admin_id], references: [id])
+
+  @@unique([loan_account_id, admin_id, role_type])
+  @@map("loan_account_roles")
 }
 
 model RepaymentSchedule {

@@ -62,14 +62,16 @@ export class AdminController {
     }
 
     // 设置cookie
-    res.cookie('admin', JSON.stringify({ id: admin.id, role: admin.role }), {
-      httpOnly: true, // 防止XSS攻击
-      secure: process.env.NODE_ENV === 'production', // 生产环境使用HTTPS
+    res.cookie('admin_id', admin.id, {
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7天过期
       sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax', // 开发用lax
       path: '/',
     });
-
+    res.cookie('admin_role', admin.role, {
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7天过期
+      sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax', // 开发用lax
+      path: '/',
+    });
     const data = this.adminService.toResponse(admin);
     return ResponseHelper.success(data, '登录成功');
   }

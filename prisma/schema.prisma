@@ -100,7 +100,6 @@ model LoanAccount {
   repaymentSchedules RepaymentSchedule[]
   repaymentRecords RepaymentRecord[]
   loanAccountRoles LoanAccountRole[]
-  chatSessionsAsLoan ChatSession[] // 与此贷款相关的聊天会话
   @@map("loan_accounts")
 }
 
@@ -282,23 +281,23 @@ enum MessageType {
 // 聊天会话表
 model ChatSession {
   id          String   @id @default(cuid())
-  loan_id     String   // 关联的贷款ID
   admin_id    Int      // 管理员ID
   user_id     Int      // 用户ID
+  admin_client_id String? // 管理员客户端ID
+  user_client_id  String? // 用户客户端ID
   created_at  DateTime @default(now())
   updated_at  DateTime @updatedAt
   last_message_at DateTime @default(now())
 
   // 关系
-  loan_account LoanAccount @relation(fields: [loan_id], references: [id], onDelete: Cascade)
   admin        Admin       @relation(fields: [admin_id], references: [id], onDelete: Cascade)
   user         User        @relation(fields: [user_id], references: [id], onDelete: Cascade)
   messages     ChatMessage[]
 
-  @@unique([loan_id, admin_id, user_id])
+  @@unique([admin_client_id, user_client_id])
   @@map("chat_sessions")
-  @@index([admin_id, updated_at])
-  @@index([user_id, updated_at])
+  @@index([admin_id, admin_client_id, updated_at])
+  @@index([user_id, user_client_id, updated_at])
 }
 
 // 聊天消息表

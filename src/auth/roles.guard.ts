@@ -11,7 +11,7 @@ import { ManagementRoles } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
 interface AuthenticatedRequest extends Request {
-  user: { id: number };
+  user: { id: number; role: string };
 }
 
 @Injectable()

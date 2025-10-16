@@ -205,7 +205,7 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
         throw new Error('Invalid order id');
       }
 
-      // 获取订单信息以便获取loan_id
+      // 获取订单信息
       const order = await this.eventsService.getOrderById(orderId);
       if (!order) {
         throw new Error('订单不存在');
@@ -234,16 +234,46 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
               },
             });
 
-            // 发送聊天通知给客户
+            // 发送聊天通知给客户（基于客户端ID创建对话）
             try {
               const chatMessage = `您的订单已被 ${result.payeeName} 接单，请及时完成支付。`;
-              await this.sendChatNotificationWithLoanId(
-                client.userId,
-                adminId, // 使用管理员ID而不是收款人ID
-                order.loan_id,
-                chatMessage,
-                'text',
+
+              // 获取收款人的客户端ID
+              const payeeConnectionId =
+                this.eventsService.getPayeeConnectionId(foundPayeeId);
+
+              // 创建聊天会话（基于客户端ID）
+              const chatSession = await this.chatService.getOrCreateChatSession(
+                {
+                  admin_id: adminId,
+                  user_id: client.userId,
+                  admin_client_id: payeeConnectionId,
+                  user_client_id: customerConnectionId,
+                },
               );
+
+              // 发送聊天消息
+              await this.chatService.sendMessage({
+                session_id: chatSession.id,
+                sender_id: adminId,
+                sender_type: 'admin',
+                message_type: 'text',
+                content: chatMessage,
+              });
+
+              // 广播消息给聊天室内的所有客户端
+              this.server.to(`chat_${chatSession.id}`).emit('new_message', {
+                message: {
+                  id: 'system',
+                  session_id: chatSession.id,
+                  sender_id: adminId,
+                  sender_type: 'admin',
+                  message_type: 'text',
+                  content: chatMessage,
+                  is_read: false,
+                  created_at: new Date(),
+                },
+              });
             } catch (chatError) {
               console.error('Failed to send chat notification:', chatError);
             }
@@ -262,72 +292,6 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   /**
-   * 发送聊天通知（带loan_id版本）
-   */
-  private async sendChatNotificationWithLoanId(
-    userId: number,
-    adminId: number,
-    loanId: string,
-    message: string,
-    messageType: 'text' | 'image' = 'text',
-  ) {
-    try {
-      // 查找或创建聊天会话
-      const chatSession = await this.chatService.getOrCreateChatSession({
-        loan_id: loanId,
-        admin_id: adminId,
-        user_id: userId,
-      });
-
-      // 发送聊天消息
-      const chatMessage = await this.chatService.sendMessage({
-        session_id: chatSession.id,
-        sender_id: adminId,
-        sender_type: 'admin',
-        message_type: messageType,
-        content: message,
-      });
-
-      // 广播聊天消息给聊天室内的所有客户端
-      this.server.to(`chat_${chatSession.id}`).emit('new_message', {
-        message: {
-          id: chatMessage.id,
-          session_id: chatMessage.session_id,
-          sender_id: chatMessage.sender_id,
-          sender_type: chatMessage.sender_type,
-          message_type: chatMessage.message_type,
-          content: chatMessage.content,
-          is_read: chatMessage.is_read,
-          created_at: chatMessage.created_at,
-        },
-      });
-
-      console.log(`Chat notification sent in room: chat_${chatSession.id}`);
-    } catch (error) {
-      console.error('Failed to send chat notification:', error);
-    }
-  }
-
-  /**
-   * 发送聊天通知（通用版本）
-   */
-  private async sendChatNotification(
-    userId: number,
-    adminId: number,
-    message: string,
-    messageType: 'text' | 'image' = 'text',
-  ) {
-    // 默认使用一个通用loan_id，需要在调用时提供正确的loan_id
-    await this.sendChatNotificationWithLoanId(
-      userId,
-      adminId,
-      'default',
-      message,
-      messageType,
-    );
-  }
-
-  /**
    * 处理聊天消息
    */
   @SubscribeMessage('chat_message')
@@ -335,7 +299,6 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: WebSocketClient,
     @MessageBody()
     data: {
-      loan_id?: string;
       target_user_id?: number;
       target_admin_id?: number;
       message_type: 'text' | 'image';
@@ -347,7 +310,6 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
         throw new Error('消息内容不能为空');
       }
 
-      let chatSession;
       let targetAdminId = data.target_admin_id;
       let targetUserId = data.target_user_id;
 
@@ -362,21 +324,29 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
         targetUserId = client.userId;
       }
 
-      // 如果指定了loan_id，创建或获取聊天会话
-      if (data.loan_id) {
-        chatSession = await this.chatService.getOrCreateChatSession({
-          loan_id: data.loan_id,
-          admin_id: targetAdminId || 0,
-          user_id: targetUserId || 0,
-        });
-      } else {
-        throw new Error('必须指定loan_id来创建聊天会话');
+      if (!targetAdminId || !targetUserId) {
+        throw new Error('无法确定目标用户或管理员');
       }
+
+      // 获取客户端ID
+      const adminClientId =
+        client.connectionType === 'payee' ? client.connectionId : undefined;
+      const userClientId =
+        client.connectionType === 'customer' ? client.connectionId : undefined;
+
+      // 创建或获取聊天会话（基于客户端ID）
+      const chatSession = await this.chatService.getOrCreateChatSession({
+        admin_id: targetAdminId,
+        user_id: targetUserId,
+        admin_client_id: adminClientId,
+        user_client_id: userClientId,
+      });
 
       // 发送聊天消息
       const message = await this.chatService.sendMessage({
         session_id: chatSession.id,
-        sender_id: client.userId!,
+        sender_id:
+          client.connectionType === 'payee' ? targetAdminId : targetUserId,
         sender_type: client.connectionType === 'payee' ? 'admin' : 'user',
         message_type: data.message_type,
         content: data.content,

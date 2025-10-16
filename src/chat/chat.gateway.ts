@@ -15,6 +15,7 @@ interface ChatSocketClient extends Socket {
   userId?: number;
   userType?: 'admin' | 'user';
   loanId?: string;
+  clientId?: string;
 }
 
 @WebSocketGateway({
@@ -37,13 +38,14 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const query = client.handshake.query;
     const userId = query.user_id ? Number(query.user_id) : undefined;
     const userType = query.user_type as 'admin' | 'user';
-    const loanId = query.loan_id as string;
+    const clientId = query.client_id as string;
 
-    if (!userId || !userType || !loanId) {
+    // 聊天连接不再需要 loanId，只需要基本的用户信息
+    if (!clientId) {
       console.error('Missing required connection parameters:', {
         userId,
         userType,
-        loanId,
+        clientId,
       });
       client.disconnect();
       return;
@@ -52,10 +54,10 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     // 保存用户信息到客户端对象
     client.userId = userId;
     client.userType = userType;
-    client.loanId = loanId;
+    client.clientId = clientId;
 
     console.log(
-      `Chat client ${client.id} connected as ${userType} with loan ${loanId}`,
+      `Chat client ${client.id} connected as ${userType} with client ${clientId}`,
     );
   }
 
@@ -70,14 +72,17 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   async handleJoinChat(
     @ConnectedSocket() client: ChatSocketClient,
     @MessageBody()
-    data: { loan_id: string; admin_id?: number; user_id?: number },
+    data: { admin_id?: number; user_id?: number },
   ) {
     try {
       // 创建或获取聊天会话
       const session = await this.chatService.getOrCreateChatSession({
-        loan_id: data.loan_id,
         admin_id: data.admin_id!,
         user_id: data.user_id!,
+        admin_client_id:
+          client.userType === 'admin' ? client.clientId : undefined,
+        user_client_id:
+          client.userType === 'user' ? client.clientId : undefined,
       });
 
       // 加入聊天室

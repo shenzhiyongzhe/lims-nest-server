@@ -3,9 +3,10 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { LoanAccountStatus, MessageType } from '@prisma/client';
 
 export interface CreateChatSessionDto {
-  loan_id: string;
   admin_id: number;
   user_id: number;
+  admin_client_id?: string;
+  user_client_id?: string;
 }
 import { Decimal } from '@prisma/client/runtime/library';
 export interface SendMessageDto {
@@ -18,17 +19,11 @@ export interface SendMessageDto {
 
 export interface ChatSessionWithMessages {
   id: string;
-  loan_id: string;
   admin_id: number;
   user_id: number;
   created_at: Date;
   updated_at: Date;
   last_message_at: Date;
-  loan_account?: {
-    id: string;
-    loan_amount: Decimal;
-    status: LoanAccountStatus;
-  };
   admin?: {
     id: number;
     username: string;
@@ -63,20 +58,12 @@ export class ChatService {
     // 先尝试查找现有的聊天会话
     let session = await this.prisma.chatSession.findUnique({
       where: {
-        loan_id_admin_id_user_id: {
-          loan_id: dto.loan_id,
-          admin_id: dto.admin_id,
-          user_id: dto.user_id,
+        admin_client_id_user_client_id: {
+          admin_client_id: dto.admin_client_id || '',
+          user_client_id: dto.user_client_id || '',
         },
       },
       include: {
-        loan_account: {
-          select: {
-            id: true,
-            loan_amount: true,
-            status: true,
-          },
-        },
         admin: {
           select: {
             id: true,
@@ -97,18 +84,12 @@ export class ChatService {
       // 如果不存在，创建新的聊天会话
       session = await this.prisma.chatSession.create({
         data: {
-          loan_id: dto.loan_id,
           admin_id: dto.admin_id,
           user_id: dto.user_id,
+          admin_client_id: dto.admin_client_id,
+          user_client_id: dto.user_client_id,
         },
         include: {
-          loan_account: {
-            select: {
-              id: true,
-              loan_amount: true,
-              status: true,
-            },
-          },
           admin: {
             select: {
               id: true,
@@ -191,6 +172,7 @@ export class ChatService {
   async getUserChatSessions(
     userId: number,
     userType: 'admin' | 'user',
+    clientId?: string,
     page: number = 1,
     limit: number = 20,
   ) {
@@ -199,15 +181,12 @@ export class ChatService {
     const sessions = await this.prisma.chatSession.findMany({
       where: {
         [userType === 'admin' ? 'admin_id' : 'user_id']: userId,
+        ...(clientId && {
+          [userType === 'admin' ? 'admin_client_id' : 'user_client_id']:
+            clientId,
+        }),
       },
       include: {
-        loan_account: {
-          select: {
-            id: true,
-            loan_amount: true,
-            status: true,
-          },
-        },
         admin: {
           select: {
             id: true,
@@ -221,15 +200,6 @@ export class ChatService {
             phone: true,
           },
         },
-        messages: {
-          where: {
-            is_read: false,
-            sender_type: userType === 'admin' ? 'user' : 'admin',
-          },
-          select: {
-            id: true,
-          },
-        },
       },
       orderBy: { last_message_at: 'desc' },
       take: limit,
@@ -239,7 +209,14 @@ export class ChatService {
     // 计算未读消息数并添加最后一条消息
     const sessionsWithUnreadCount = await Promise.all(
       sessions.map(async (session) => {
-        const unreadCount = session.messages.length;
+        // 获取未读消息数
+        const unreadCount = await this.prisma.chatMessage.count({
+          where: {
+            session_id: session.id,
+            is_read: false,
+            sender_type: userType === 'admin' ? 'user' : 'admin',
+          },
+        });
 
         // 获取最后一条消息
         const lastMessage = await this.prisma.chatMessage.findFirst({
@@ -258,8 +235,6 @@ export class ChatService {
           ...session,
           unread_count: unreadCount,
           last_message: lastMessage,
-          // 移除临时的messages数组，因为它只用于计算未读数
-          messages: undefined,
         };
       }),
     );
@@ -300,13 +275,6 @@ export class ChatService {
     const session = await this.prisma.chatSession.findUnique({
       where: { id: sessionId },
       include: {
-        loan_account: {
-          select: {
-            id: true,
-            loan_amount: true,
-            status: true,
-          },
-        },
         admin: {
           select: {
             id: true,

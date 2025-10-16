@@ -73,6 +73,10 @@ export class EventsService {
     return this.customerConnections.get(userId);
   }
 
+  getPayeeConnectionId(payeeId: number): string | undefined {
+    return this.payeeConnections.get(payeeId);
+  }
+
   async submitOrder(data: OrderPayload) {
     this.pendingOrders.set(data.id, data);
     await this.broadcastOrder(data);

@@ -9,14 +9,11 @@ import {
   Req,
 } from '@nestjs/common';
 import { ChatService } from './chat.service';
-import { CurrentUser } from '../auth/current-user.decorator';
 import { MessageType } from '@prisma/client';
 
 interface AuthenticatedRequest {
-  user: {
-    id: number;
-    role: string;
-  };
+  clientId?: string;
+  cookies?: { [key: string]: string };
 }
 
 @Controller('chat')
@@ -24,21 +21,52 @@ export class ChatController {
   constructor(private readonly chatService: ChatService) {}
 
   /**
+   * 从cookie中获取用户信息
+   */
+  private getUserFromCookie(cookies: { [key: string]: string }) {
+    // 从cookie中获取管理员信息
+    const adminData = cookies.admin;
+    if (adminData) {
+      try {
+        const admin = JSON.parse(decodeURIComponent(adminData));
+        return {
+          id: admin.id,
+          role: '管理员',
+          isAdmin: true,
+        };
+      } catch (e) {
+        console.error('Failed to parse admin cookie:', e);
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * 获取用户的聊天会话列表
    */
   @Get('sessions')
   async getChatSessions(
-    @CurrentUser() user: { id: number; role: string },
+    @Req() request: AuthenticatedRequest,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
+    const user = this.getUserFromCookie(request.cookies || {});
+    if (!user) {
+      throw new BadRequestException('未找到用户身份信息');
+    }
+
     const pageNum = page ? parseInt(page, 10) : 1;
     const limitNum = limit ? parseInt(limit, 10) : 20;
-    const userType = user.role === 'admin' ? 'admin' : 'user';
+    const userType = user.role === '管理员' ? 'admin' : 'user';
+
+    // 获取或生成客户端ID
+    const clientId = request.clientId || this.generateClientId(user.id);
 
     return this.chatService.getUserChatSessions(
       user.id,
       userType,
+      clientId,
       pageNum,
       limitNum,
     );
@@ -50,8 +78,13 @@ export class ChatController {
   @Get('sessions/:sessionId')
   async getChatSessionWithMessages(
     @Param('sessionId') sessionId: string,
-    @CurrentUser() user: { id: number; role: string },
+    @Req() request: AuthenticatedRequest,
   ) {
+    const user = this.getUserFromCookie(request.cookies || {});
+    if (!user) {
+      throw new BadRequestException('未找到用户身份信息');
+    }
+
     const userType = user.role === 'admin' ? 'admin' : 'user';
     return this.chatService.getChatSessionWithMessages(
       sessionId,
@@ -86,8 +119,13 @@ export class ChatController {
       message_type: MessageType;
       content: string;
     },
-    @CurrentUser() user: { id: number; role: string },
+    @Req() request: AuthenticatedRequest,
   ) {
+    const user = this.getUserFromCookie(request.cookies || {});
+    if (!user) {
+      throw new BadRequestException('未找到用户身份信息');
+    }
+
     // 验证发送者身份
     const userType = user.role === 'admin' ? 'admin' : 'user';
     return this.chatService.sendMessage({
@@ -104,9 +142,14 @@ export class ChatController {
    */
   @Post('sessions')
   async getOrCreateChatSession(
-    @Body() dto: { loan_id: string; admin_id?: number; user_id?: number },
-    @CurrentUser() user: { id: number; role: string },
+    @Body() dto: { admin_id?: number; user_id?: number },
+    @Req() request: AuthenticatedRequest,
   ) {
+    const user = this.getUserFromCookie(request.cookies || {});
+    if (!user) {
+      throw new BadRequestException('未找到用户身份信息');
+    }
+
     const userType = user.role === 'admin' ? 'admin' : 'user';
 
     if (userType === 'admin' && !dto.admin_id) {
@@ -115,18 +158,39 @@ export class ChatController {
       dto.user_id = user.id;
     }
 
+    // 获取当前用户的客户端ID
+    const currentClientId = request.clientId || this.generateClientId(user.id);
+
     return this.chatService.getOrCreateChatSession({
-      loan_id: dto.loan_id,
       admin_id: dto.admin_id!,
       user_id: dto.user_id!,
+      admin_client_id: userType === 'admin' ? currentClientId : undefined,
+      user_client_id: userType === 'user' ? currentClientId : undefined,
     });
+  }
+
+  /**
+   * 生成客户端ID（如果没有的话）
+   */
+  private generateClientId(userId?: number): string {
+    if (userId) {
+      // 管理员的客户端ID基于管理员ID固定
+      return `admin_client_${userId}`;
+    }
+    // 普通用户的客户端ID随机生成
+    return `user_client_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   }
 
   /**
    * 获取未读消息总数
    */
   @Get('unread-count')
-  async getUnreadCount(@CurrentUser() user: { id: number; role: string }) {
+  async getUnreadCount(@Req() request: AuthenticatedRequest) {
+    const user = this.getUserFromCookie(request.cookies || {});
+    if (!user) {
+      throw new BadRequestException('未找到用户身份信息');
+    }
+
     const userType = user.role === 'admin' ? 'admin' : 'user';
     return {
       unread_count: await this.chatService.getUnreadMessageCount(
@@ -142,8 +206,13 @@ export class ChatController {
   @Post('sessions/:sessionId/mark-read')
   async markMessagesAsRead(
     @Param('sessionId') sessionId: string,
-    @CurrentUser() user: { id: number; role: string },
+    @Req() request: AuthenticatedRequest,
   ) {
+    const user = this.getUserFromCookie(request.cookies || {});
+    if (!user) {
+      throw new BadRequestException('未找到用户身份信息');
+    }
+
     const userType = user.role === 'admin' ? 'admin' : 'user';
     return this.chatService.markMessagesAsRead(sessionId, user.id, userType);
   }

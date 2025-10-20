@@ -8,57 +8,37 @@ export class AuthController {
   constructor(private readonly prisma: PrismaService) {}
 
   @Get('verify')
-  async verify(@CurrentUser() user?: { id: number }): Promise<{
+  async verify(
+    @CurrentUser() user: { id: number; role: string } | null,
+  ): Promise<{
     message: string;
     valid: boolean;
     data: any;
     client_id?: string;
   }> {
-    // 如果没有用户，说明是非管理员用户
     if (!user) {
-      return {
-        message: '非管理员用户',
-        valid: false,
-        data: null,
-      };
+      return { message: '未登录', valid: false, data: null };
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-    const admin = await this.prisma.admin.findUnique({
-      where: { id: user.id },
-      select: {
-        id: true,
-        username: true,
-        phone: true,
-        role: true,
-      },
-    });
-
-    if (!admin) {
-      return {
-        message: '用户不存在',
-        valid: false,
-        data: null,
-      };
-    }
-
-    // 生成客户端ID（如果是管理员的话）
-    if (admin.role === '管理员') {
-      const clientId = this.generateClientId(admin.id);
-
+    // If role is 管理员, enrich from DB (keeps existing behavior)
+    if (user.role === '管理员') {
+      const admin = await this.prisma.admin.findUnique({
+        where: { id: user.id },
+        select: { id: true, username: true, phone: true, role: true },
+      });
+      if (!admin) {
+        return { message: '用户不存在', valid: false, data: null };
+      }
       return {
         message: '验证成功',
         valid: true,
         data: admin,
-        client_id: clientId,
+        client_id: this.generateClientId(admin.id),
       };
     }
 
-    return {
-      message: '验证成功',
-      valid: true,
-      data: admin,
-    };
+    // For non-admin, return minimal unified identity
+    return { message: '验证成功', valid: true, data: user };
   }
 
   /**

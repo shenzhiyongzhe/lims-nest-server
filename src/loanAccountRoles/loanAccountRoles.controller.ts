@@ -59,6 +59,7 @@ export class LoanAccountRolesController {
   @Post()
   async createRole(
     @Body() body: CreateLoanAccountRoleDto,
+    @CurrentUser() user: any,
   ): Promise<ApiResponseDto> {
     const role = await this.loanAccountRolesService.createRole(
       body.loan_account_id,

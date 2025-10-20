@@ -10,13 +10,13 @@ datasource db {
 model User {
   id           Int      @id @default(autoincrement())
   username     String   @db.VarChar(10)
-  password     String   @db.VarChar(32)
-  phone        String   @db.VarChar(11)
+  password     String   @db.VarChar(32) @default("123456")
+  phone        String?   @db.VarChar(11)
   address      String   @db.VarChar(100)
   lv           String   @default("青铜用户") @db.VarChar(16)
-  overtime     Int      @default(0)
-  overdue_time Int      @default(0)
-  is_high_risk Boolean  @default(false)
+  overtime     Int?      @default(0)
+  overdue_time Int?      @default(0)
+  is_high_risk Boolean?  @default(false)
   createdAt    DateTime @default(now())
   updatedAt    DateTime? @updatedAt
 
@@ -38,8 +38,8 @@ enum ManagementRoles {
 model Admin {
   id           Int      @id @default(autoincrement())
   username     String   @db.VarChar(10)
-  password     String   @db.VarChar(32)
-  phone        String   @db.VarChar(11)
+  password     String   @db.VarChar(32) @default("123456")
+  phone        String?   @db.VarChar(11)
   role         ManagementRoles
   createdAt    DateTime @default(now())
   updatedAt    DateTime? @updatedAt

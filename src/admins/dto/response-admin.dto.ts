@@ -1,4 +1,10 @@
-import { IsNumber, IsString, Length, Matches } from 'class-validator';
+import {
+  IsNumber,
+  IsOptional,
+  IsString,
+  Length,
+  Matches,
+} from 'class-validator';
 
 export class ResponseAdminDto {
   @IsNumber()
@@ -8,6 +14,7 @@ export class ResponseAdminDto {
   @Length(1, 10)
   username: string;
 
+  @IsOptional()
   @IsString()
   @Length(6, 32)
   password: string;
@@ -16,6 +23,7 @@ export class ResponseAdminDto {
   @Length(1, 16)
   role: string;
 
+  @IsOptional()
   @IsString()
   @Matches(/^\d{11}$/)
   phone: string;

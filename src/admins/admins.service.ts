@@ -37,6 +37,6 @@ export class AdminService {
   }
   toResponse(admin: Admin): ResponseAdminDto {
     const { id, username, phone, role, password } = admin;
-    return { id, username, phone, role, password };
+    return { id, username, phone: phone ?? '', role, password: password ?? '' };
   }
 }

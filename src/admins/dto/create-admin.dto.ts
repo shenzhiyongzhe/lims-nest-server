@@ -1,4 +1,4 @@
-import { IsString, Length, Matches } from 'class-validator';
+import { IsOptional, IsString, Length, Matches } from 'class-validator';
 
 export class CreateAdminDto {
   @IsString()
@@ -7,12 +7,14 @@ export class CreateAdminDto {
 
   @IsString()
   @Length(6, 32)
+  @IsOptional()
   password: string;
 
   @IsString()
   @Length(1, 16)
   role: string;
 
+  @IsOptional()
   @IsString()
   @Matches(/^\d{11}$/)
   phone: string;

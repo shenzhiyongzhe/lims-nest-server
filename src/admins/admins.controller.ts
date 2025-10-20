@@ -17,9 +17,14 @@ import { ManagementRoles } from '@prisma/client';
 import { CreateAdminDto } from './dto/create-admin.dto';
 import { ResponseHelper } from '../common/response-helper';
 import { ApiResponseDto } from '../common/dto/api-response.dto';
+import { VisitorsService } from '../visitors/visitors.service';
+import { VisitorType, VisitorAction } from '../visitors/dto/log-visit.dto';
 @Controller('admins')
 export class AdminController {
-  constructor(private readonly adminService: AdminService) {}
+  constructor(
+    private readonly adminService: AdminService,
+    private readonly visitorsService: VisitorsService,
+  ) {}
 
   @Get()
   async findAll(): Promise<ApiResponseDto> {
@@ -72,6 +77,18 @@ export class AdminController {
       sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax', // 开发用lax
       path: '/',
     });
+    // Log admin login visit
+    try {
+      await this.visitorsService.logVisit({
+        visitor_type: VisitorType.admin,
+        visitor_id: admin.id,
+        action_type: VisitorAction.login,
+        page_url: '/admins/login',
+      });
+    } catch (error) {
+      console.error('Failed to log admin login visit:', error);
+    }
+
     const data = this.adminService.toResponse(admin);
     return ResponseHelper.success(data, '登录成功');
   }

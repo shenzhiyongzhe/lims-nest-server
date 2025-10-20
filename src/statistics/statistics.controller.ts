@@ -1,38 +1,63 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Query, Body, UseGuards } from '@nestjs/common';
 import { StatisticsService } from './statistics.service';
+import { GetStatisticsDto } from './dto/get-statistics.dto';
+import { CalculateStatisticsDto } from './dto/calculate-statistics.dto';
 import { AuthGuard } from '../auth/auth.guard';
-import { RolesGuard } from '../auth/roles.guard';
-import { CurrentUser } from '../auth/current-user.decorator';
-import { ResponseHelper } from '../common/response-helper';
-import { ApiResponseDto } from '../common/dto/api-response.dto';
-import { PrismaService } from '../../prisma/prisma.service';
+import { ResponseHelper } from 'src/common/response-helper';
 
 @Controller('statistics')
-@UseGuards(AuthGuard, RolesGuard)
+@UseGuards(AuthGuard)
 export class StatisticsController {
-  constructor(
-    private readonly statisticsService: StatisticsService,
-    private readonly prisma: PrismaService,
-  ) {}
+  constructor(private readonly statisticsService: StatisticsService) {}
 
   @Get()
-  async getStatistics(
-    @CurrentUser() user: { id: number },
-  ): Promise<ApiResponseDto> {
-    const admin = await this.prisma.admin.findUnique({
-      where: { id: user.id },
-      select: { role: true },
-    });
+  async getStatistics(@Query() query: GetStatisticsDto) {
+    const { range = 'last_7_days', startDate, endDate } = query;
 
-    if (!admin) {
-      return ResponseHelper.error('用户不存在', 404);
+    let parsedStartDate: Date | undefined;
+    let parsedEndDate: Date | undefined;
+
+    if (startDate) {
+      parsedStartDate = new Date(startDate);
+    }
+    if (endDate) {
+      parsedEndDate = new Date(endDate);
     }
 
-    const stats = await this.statisticsService.getStatistics(
-      user.id,
-      admin.role as string,
+    const statistics = await this.statisticsService.getStatisticsWithDateRange(
+      range,
+      parsedStartDate,
+      parsedEndDate,
     );
+    return ResponseHelper.success(statistics, '统计数据获取成功');
+  }
 
-    return ResponseHelper.success(stats, '获取统计数据成功');
+  @Post('calculate')
+  async calculateStatistics(@Body() body: CalculateStatisticsDto) {
+    const { date } = body;
+    const targetDate = new Date(date);
+
+    await this.statisticsService.calculateDailyStatistics(targetDate);
+
+    return ResponseHelper.success(
+      `已计算 ${date} 的统计数据`,
+      '统计数据计算成功',
+    );
+  }
+
+  @Post('calculate-range')
+  async calculateStatisticsRange(
+    @Body() body: { startDate: string; endDate: string },
+  ) {
+    const { startDate, endDate } = body;
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+
+    await this.statisticsService.calculateMissingStatistics(start, end);
+
+    return ResponseHelper.success(
+      `已计算 ${startDate} 到 ${endDate} 的统计数据`,
+      '统计数据计算成功',
+    );
   }
 }

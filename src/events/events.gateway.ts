@@ -9,7 +9,6 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { EventsService } from './events.service';
-import { ChatService } from '../chat/chat.service';
 import { PaymentMethod } from '@prisma/client';
 import { randomUUID } from 'crypto';
 
@@ -31,10 +30,7 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;
 
-  constructor(
-    private readonly eventsService: EventsService,
-    private readonly chatService: ChatService,
-  ) {}
+  constructor(private readonly eventsService: EventsService) {}
 
   private buildSubmitOrderPayload(data: unknown) {
     if (!data || typeof data !== 'object') {
@@ -80,7 +76,12 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   async handleConnection(client: WebSocketClient, ...args: any[]) {
-    console.log('WebSocket client connected:', client.id);
+    console.log('🔌 WebSocket客户端连接:', {
+      clientId: client.id,
+      query: client.handshake.query,
+      headers: client.handshake.headers,
+      address: client.handshake.address,
+    });
 
     // 从查询参数获取连接信息
     const query = client.handshake.query;
@@ -88,8 +89,15 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const userIdQuery = query.user_id as string;
     const adminIdQuery = query.admin_id as string;
 
+    console.log('📋 连接参数解析:', {
+      type,
+      userIdQuery,
+      adminIdQuery,
+      isValidType: type === 'payee' || type === 'customer',
+    });
+
     if (!type || (type !== 'payee' && type !== 'customer')) {
-      console.error('Invalid connection type:', type);
+      console.error('❌ 无效的连接类型:', type);
       client.disconnect();
       return;
     }
@@ -97,28 +105,36 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     let payeeId: number | undefined;
     if (type === 'payee') {
       const adminId = adminIdQuery ? Number(adminIdQuery) : undefined;
+      console.log('🔍 收款人连接 - 管理员ID:', adminId);
+
       if (!adminId || !Number.isFinite(adminId)) {
-        console.error('Missing or invalid admin_id for payee connection');
+        console.error('❌ 收款人连接缺少或无效的admin_id:', adminIdQuery);
         client.disconnect();
         return;
       }
 
+      console.log('�� 查找管理员绑定的收款人...');
       const foundPayeeId = await this.eventsService.findPayeeIdByAdmin(adminId);
+      console.log('�� 查找结果:', { adminId, foundPayeeId });
+
       if (!foundPayeeId) {
-        console.error('该管理员未绑定收款人');
+        console.error('❌ 该管理员未绑定收款人:', adminId);
         client.disconnect();
         return;
       }
       payeeId = foundPayeeId;
+      console.log('✅ 找到收款人ID:', payeeId);
     }
 
     if (type === 'customer' && !userIdQuery) {
-      console.error('Missing user_id for customer connection');
+      console.error('❌ 客户连接缺少user_id');
       client.disconnect();
       return;
     }
 
     const userId = userIdQuery ? Number(userIdQuery) : undefined;
+    console.log('�� 添加连接到服务:', { type, payeeId, userId });
+
     const connectionId = this.eventsService.addConnection(type, client, {
       payeeId,
       userId,
@@ -137,7 +153,8 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
       data: { payeeId, userId },
     });
 
-    console.log(`WebSocket client ${client.id} connected as ${type}`, {
+    console.log(`✅ WebSocket客户端 ${client.id} 连接成功`, {
+      type,
       payeeId,
       userId,
       connectionId,
@@ -233,50 +250,6 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
                 payeeName: result.payeeName,
               },
             });
-
-            // 发送聊天通知给客户（基于客户端ID创建对话）
-            try {
-              const chatMessage = `您的订单已被 ${result.payeeName} 接单，请及时完成支付。`;
-
-              // 获取收款人的客户端ID
-              const payeeConnectionId =
-                this.eventsService.getPayeeConnectionId(foundPayeeId);
-
-              // 创建聊天会话（基于客户端ID）
-              const chatSession = await this.chatService.getOrCreateChatSession(
-                {
-                  admin_id: adminId,
-                  user_id: client.userId,
-                  admin_client_id: payeeConnectionId,
-                  user_client_id: customerConnectionId,
-                },
-              );
-
-              // 发送聊天消息
-              await this.chatService.sendMessage({
-                session_id: chatSession.id,
-                sender_id: adminId,
-                sender_type: 'admin',
-                message_type: 'text',
-                content: chatMessage,
-              });
-
-              // 广播消息给聊天室内的所有客户端
-              this.server.to(`chat_${chatSession.id}`).emit('new_message', {
-                message: {
-                  id: 'system',
-                  session_id: chatSession.id,
-                  sender_id: adminId,
-                  sender_type: 'admin',
-                  message_type: 'text',
-                  content: chatMessage,
-                  is_read: false,
-                  created_at: new Date(),
-                },
-              });
-            } catch (chatError) {
-              console.error('Failed to send chat notification:', chatError);
-            }
           }
         }
       }
@@ -288,150 +261,6 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
         data: { message: error.message || '抢单失败' },
       });
       throw error;
-    }
-  }
-
-  /**
-   * 处理聊天消息
-   */
-  @SubscribeMessage('chat_message')
-  async handleChatMessage(
-    @ConnectedSocket() client: WebSocketClient,
-    @MessageBody()
-    data: {
-      target_user_id?: number;
-      target_admin_id?: number;
-      message_type: 'text' | 'image';
-      content: string;
-    },
-  ) {
-    try {
-      if (!data.content?.trim()) {
-        throw new Error('消息内容不能为空');
-      }
-
-      let targetAdminId = data.target_admin_id;
-      let targetUserId = data.target_user_id;
-
-      // 根据连接类型确定目标用户
-      if (client.connectionType === 'payee' && client.payeeId) {
-        // 收款人发送消息给客户
-        targetUserId = data.target_user_id;
-        targetAdminId = client.payeeId; // 实际上应该是对应的管理员ID
-      } else if (client.connectionType === 'customer' && client.userId) {
-        // 客户发送消息给收款人
-        targetAdminId = data.target_admin_id;
-        targetUserId = client.userId;
-      }
-
-      if (!targetAdminId || !targetUserId) {
-        throw new Error('无法确定目标用户或管理员');
-      }
-
-      // 获取客户端ID
-      const adminClientId =
-        client.connectionType === 'payee' ? client.connectionId : undefined;
-      const userClientId =
-        client.connectionType === 'customer' ? client.connectionId : undefined;
-
-      // 创建或获取聊天会话（基于客户端ID）
-      const chatSession = await this.chatService.getOrCreateChatSession({
-        admin_id: targetAdminId,
-        user_id: targetUserId,
-        admin_client_id: adminClientId,
-        user_client_id: userClientId,
-      });
-
-      // 发送聊天消息
-      const message = await this.chatService.sendMessage({
-        session_id: chatSession.id,
-        sender_id:
-          client.connectionType === 'payee' ? targetAdminId : targetUserId,
-        sender_type: client.connectionType === 'payee' ? 'admin' : 'user',
-        message_type: data.message_type,
-        content: data.content,
-      });
-
-      // 广播消息给聊天室内的所有客户端
-      this.server.to(`chat_${chatSession.id}`).emit('new_message', {
-        message: {
-          id: message.id,
-          session_id: message.session_id,
-          sender_id: message.sender_id,
-          sender_type: message.sender_type,
-          message_type: message.message_type,
-          content: message.content,
-          is_read: message.is_read,
-          created_at: message.created_at,
-        },
-      });
-
-      return { success: true, message_id: message.id };
-    } catch (error) {
-      client.emit('error', {
-        type: 'chat_error',
-        data: { message: error.message || '发送聊天消息失败' },
-      });
-      throw error;
-    }
-  }
-
-  /**
-   * 加入聊天室
-   */
-  @SubscribeMessage('join_chat_room')
-  async handleJoinChatRoom(
-    @ConnectedSocket() client: WebSocketClient,
-    @MessageBody() data: { session_id: string },
-  ) {
-    try {
-      const sessionId = data.session_id;
-
-      // 验证聊天会话是否存在且用户有权限访问
-      const session = await this.chatService.getChatSessionWithMessages(
-        sessionId,
-        client.userId!,
-        client.connectionType === 'payee' ? 'admin' : 'user',
-      );
-
-      // 加入聊天室
-      await client.join(`chat_${sessionId}`);
-
-      // 发送会话信息和历史消息
-      client.emit('chat_room_joined', {
-        session: session,
-      });
-
-      console.log(`Client ${client.id} joined chat room: chat_${sessionId}`);
-    } catch (error) {
-      client.emit('error', {
-        type: 'join_chat_room_error',
-        data: { message: error.message || '加入聊天室失败' },
-      });
-      throw error;
-    }
-  }
-
-  /**
-   * 获取聊天会话列表
-   */
-  @SubscribeMessage('get_chat_sessions')
-  async handleGetChatSessions(@ConnectedSocket() client: WebSocketClient) {
-    try {
-      const userType = client.connectionType === 'payee' ? 'admin' : 'user';
-      const sessions = await this.chatService.getUserChatSessions(
-        client.userId!,
-        userType,
-      );
-
-      client.emit('chat_sessions', {
-        sessions,
-      });
-    } catch (error) {
-      client.emit('error', {
-        type: 'get_chat_sessions_error',
-        data: { message: error.message || '获取聊天会话失败' },
-      });
     }
   }
 }

@@ -1,248 +1,231 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 
-interface StatisticsResult {
-  todayCollection: number;
-  monthCollection: number;
-  yearCollection: number;
-  totalHandlingFee: number;
-  todayOverdueCount: number;
-  todayPaidCount: number;
-  todayPendingCount: number;
-  totalBorrowedUsers: number;
-  settledUsers: number;
-  unsettledUsers: number;
-}
-
 @Injectable()
 export class StatisticsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getStatistics(
-    adminId: number,
-    role: string,
-  ): Promise<StatisticsResult> {
-    const now = new Date();
-    const todayStart = new Date(now);
-    todayStart.setHours(6, 0, 0, 0);
-    const todayEnd = new Date(todayStart);
-    todayEnd.setDate(todayEnd.getDate() + 1);
+  async calculateDailyStatistics(date: Date): Promise<void> {
+    const startOfDay = new Date(date);
+    startOfDay.setHours(0, 0, 0, 0);
 
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const yearStart = new Date(now.getFullYear(), 0, 1);
+    const endOfDay = new Date(date);
+    endOfDay.setHours(23, 59, 59, 999);
 
-    // 构建基础查询条件（根据角色过滤）
-    const loanAccountWhere = await this.buildLoanAccountFilter(adminId, role);
+    console.log(`📊 计算 ${date.toISOString().split('T')[0]} 的统计数据`);
 
-    console.log(`todayStart: ${todayStart}`);
-    console.log(`todayEnd: ${todayEnd}`);
-
-    // 并行执行所有查询以提高性能
-    const [
-      todayCollection,
-      monthCollection,
-      yearCollection,
-      totalHandlingFee,
-      todayOverdueCount,
-      todayPaidCount,
-      todayPendingCount,
-      borrowedUsers,
-      settledUsers,
-    ] = await Promise.all([
-      this.getCollectionAmount(loanAccountWhere, todayStart, todayEnd),
-      this.getCollectionAmount(loanAccountWhere, monthStart, todayEnd),
-      this.getCollectionAmount(loanAccountWhere, yearStart, todayEnd),
-      this.getTotalHandlingFee(loanAccountWhere),
-      this.getTodayOverdueCount(loanAccountWhere, todayStart, todayEnd),
-      this.getTodayPaidCount(loanAccountWhere, todayStart, todayEnd),
-      this.getTodayPendingCount(loanAccountWhere, todayStart, todayEnd),
-      this.getBorrowedUsersCount(loanAccountWhere),
-      this.getSettledUsersCount(loanAccountWhere),
-    ]);
-
-    return {
-      todayCollection,
-      monthCollection,
-      yearCollection,
-      totalHandlingFee,
-      todayOverdueCount,
-      todayPaidCount,
-      todayPendingCount,
-      totalBorrowedUsers: borrowedUsers,
-      settledUsers,
-      unsettledUsers: borrowedUsers - settledUsers,
-    };
-  }
-
-  private async buildLoanAccountFilter(adminId: number, role: string) {
-    if (role === '管理员') {
-      return {}; // 管理员查看所有数据
-    }
-
-    const admin = await this.prisma.admin.findUnique({
-      where: { id: adminId },
-      select: { username: true },
-    });
-    const username = admin?.username || '';
-
-    if (role === '收款人') {
-      return { collector: username };
-    }
-
-    if (role === '风控人') {
-      return { risk_controller: username };
-    }
-
-    return {};
-  }
-
-  private async getCollectionAmount(
-    loanAccountWhere: any,
-    startDate: Date,
-    endDate: Date,
-  ): Promise<number> {
-    const result = await this.prisma.repaymentSchedule.aggregate({
+    // 1. 计算总收款金额（所有payee的收款）
+    const totalPayeeResult = await this.prisma.repaymentRecord.aggregate({
       where: {
-        status: 'paid',
         paid_at: {
-          gte: startDate,
-          lt: endDate,
+          gte: startOfDay,
+          lte: endOfDay,
         },
-        loan_account: loanAccountWhere,
       },
       _sum: {
         paid_amount: true,
       },
-    });
-    return Number(result._sum.paid_amount || 0);
-  }
-
-  private async getTotalHandlingFee(loanAccountWhere: any): Promise<number> {
-    const result = await this.prisma.loanAccount.aggregate({
-      where: loanAccountWhere,
-      _sum: {
-        handling_fee: true,
+      _count: {
+        id: true,
       },
     });
-    return Number(result._sum.handling_fee || 0);
-  }
 
-  private async getTodayOverdueCount(
-    loanAccountWhere: any,
-    startDate: Date,
-    endDate: Date,
-  ): Promise<number> {
-    const overdueRecords = await this.prisma.overdueRecord.findMany({
+    const payeeAmount = Number(totalPayeeResult._sum.paid_amount || 0);
+    const transactionCount = totalPayeeResult._count.id;
+
+    // 2. 获取collector相关的loan_ids
+    const collectorLoans = await this.prisma.loanAccountRole.findMany({
       where: {
-        overdue_date: {
-          gte: startDate,
-          lt: endDate,
-        },
-        schedule: {
-          loan_account: loanAccountWhere,
-        },
+        role_type: 'collector',
       },
-      distinct: ['user_id'],
-      select: { user_id: true },
-    });
-    return overdueRecords.length;
-  }
-
-  private async getTodayPaidCount(
-    loanAccountWhere: any,
-    startDate: Date,
-    endDate: Date,
-  ): Promise<number> {
-    const paidSchedules = await this.prisma.repaymentSchedule.findMany({
-      where: {
-        status: 'paid',
-        paid_at: {
-          gte: startDate,
-          lt: endDate,
-        },
-        loan_account: loanAccountWhere,
-      },
-      distinct: ['loan_id'],
       select: {
-        loan_account: {
-          select: { user_id: true },
+        loan_account_id: true,
+      },
+    });
+
+    const collectorLoanIds = collectorLoans.map((loan) => loan.loan_account_id);
+
+    // 3. 计算collector收款金额
+    let collectorAmount = 0;
+    if (collectorLoanIds.length > 0) {
+      const collectorResult = await this.prisma.repaymentRecord.aggregate({
+        where: {
+          loan_id: {
+            in: collectorLoanIds,
+          },
+          paid_at: {
+            gte: startOfDay,
+            lte: endOfDay,
+          },
         },
-      },
-    });
-    const uniqueUsers = new Set(
-      paidSchedules.map((s) => s.loan_account.user_id),
-    );
-    return uniqueUsers.size;
-  }
-
-  private async getTodayPendingCount(
-    loanAccountWhere: any,
-    startDate: Date,
-    endDate: Date,
-  ): Promise<number> {
-    const pendingSchedules = await this.prisma.repaymentSchedule.findMany({
-      where: {
-        status: { in: ['pending', 'active'] },
-        due_end_date: {
-          gte: startDate,
-          lte: endDate,
+        _sum: {
+          paid_amount: true,
         },
-        loan_account: loanAccountWhere,
-      },
-      distinct: ['loan_id'],
-      select: {
-        loan_account: {
-          select: { user_id: true },
-        },
-      },
-    });
-    const uniqueUsers = new Set(
-      pendingSchedules.map((s) => s.loan_account.user_id),
-    );
-    return uniqueUsers.size;
-  }
-
-  private async getBorrowedUsersCount(loanAccountWhere: any): Promise<number> {
-    const users = await this.prisma.loanAccount.findMany({
-      where: loanAccountWhere,
-      distinct: ['user_id'],
-      select: { user_id: true },
-    });
-    return users.length;
-  }
-
-  private async getSettledUsersCount(loanAccountWhere: any): Promise<number> {
-    const allLoans = await this.prisma.loanAccount.findMany({
-      where: loanAccountWhere,
-      select: {
-        user_id: true,
-        total_periods: true,
-        repaid_periods: true,
-      },
-    });
-
-    const userLoans = new Map<
-      number,
-      Array<{ total: number; repaid: number }>
-    >();
-    for (const loan of allLoans) {
-      if (!userLoans.has(loan.user_id)) {
-        userLoans.set(loan.user_id, []);
-      }
-      userLoans.get(loan.user_id)!.push({
-        total: loan.total_periods,
-        repaid: loan.repaid_periods,
       });
+      collectorAmount = Number(collectorResult._sum.paid_amount || 0);
     }
 
-    let settledCount = 0;
-    for (const [, loans] of userLoans) {
-      const allSettled = loans.every((loan) => loan.repaid >= loan.total);
-      if (allSettled) {
-        settledCount++;
+    // 4. 获取risk_controller相关的loan_ids
+    const riskControllerLoans = await this.prisma.loanAccountRole.findMany({
+      where: {
+        role_type: 'risk_controller',
+      },
+      select: {
+        loan_account_id: true,
+      },
+    });
+
+    const riskControllerLoanIds = riskControllerLoans.map(
+      (loan) => loan.loan_account_id,
+    );
+
+    // 5. 计算risk_controller收款金额
+    let riskControllerAmount = 0;
+    if (riskControllerLoanIds.length > 0) {
+      const riskControllerResult = await this.prisma.repaymentRecord.aggregate({
+        where: {
+          loan_id: {
+            in: riskControllerLoanIds,
+          },
+          paid_at: {
+            gte: startOfDay,
+            lte: endOfDay,
+          },
+        },
+        _sum: {
+          paid_amount: true,
+        },
+      });
+      riskControllerAmount = Number(riskControllerResult._sum.paid_amount || 0);
+    }
+
+    const totalAmount = payeeAmount;
+
+    console.log(`📈 统计结果:`, {
+      date: date.toISOString().split('T')[0],
+      totalAmount,
+      payeeAmount,
+      collectorAmount,
+      riskControllerAmount,
+      transactionCount,
+    });
+
+    // 6. 保存或更新统计数据
+    await this.prisma.dailyStatistics.upsert({
+      where: {
+        date: startOfDay,
+      },
+      update: {
+        total_amount: totalAmount,
+        payee_amount: payeeAmount,
+        collector_amount: collectorAmount,
+        risk_controller_amount: riskControllerAmount,
+        transaction_count: transactionCount,
+        updated_at: new Date(),
+      },
+      create: {
+        date: startOfDay,
+        total_amount: totalAmount,
+        payee_amount: payeeAmount,
+        collector_amount: collectorAmount,
+        risk_controller_amount: riskControllerAmount,
+        transaction_count: transactionCount,
+      },
+    });
+
+    console.log(`✅ ${date.toISOString().split('T')[0]} 统计数据已保存`);
+  }
+
+  async getStatistics(startDate: Date, endDate: Date) {
+    const start = new Date(startDate);
+    start.setHours(0, 0, 0, 0);
+
+    const end = new Date(endDate);
+    end.setHours(23, 59, 59, 999);
+
+    const statistics = await this.prisma.dailyStatistics.findMany({
+      where: {
+        date: {
+          gte: start,
+          lte: end,
+        },
+      },
+      orderBy: {
+        date: 'asc',
+      },
+    });
+
+    return statistics.map((stat) => ({
+      date: stat.date.toISOString().split('T')[0],
+      total_amount: Number(stat.total_amount),
+      payee_amount: Number(stat.payee_amount),
+      collector_amount: Number(stat.collector_amount),
+      risk_controller_amount: Number(stat.risk_controller_amount),
+      transaction_count: stat.transaction_count,
+    }));
+  }
+
+  async getStatisticsWithDateRange(
+    range: string,
+    customStart?: Date,
+    customEnd?: Date,
+  ) {
+    const now = new Date();
+    let startDate: Date;
+    let endDate: Date = now;
+
+    switch (range) {
+      case 'last_7_days':
+        startDate = new Date(now);
+        startDate.setDate(now.getDate() - 7);
+        break;
+      case 'last_30_days':
+        startDate = new Date(now);
+        startDate.setDate(now.getDate() - 30);
+        break;
+      case 'last_90_days':
+        startDate = new Date(now);
+        startDate.setDate(now.getDate() - 90);
+        break;
+      case 'custom':
+        if (!customStart || !customEnd) {
+          throw new Error('Custom date range requires start and end dates');
+        }
+        startDate = customStart;
+        endDate = customEnd;
+        break;
+      default:
+        // Default to last 7 days
+        startDate = new Date(now);
+        startDate.setDate(now.getDate() - 7);
+    }
+
+    return this.getStatistics(startDate, endDate);
+  }
+
+  async calculateMissingStatistics(
+    startDate: Date,
+    endDate: Date,
+  ): Promise<void> {
+    const current = new Date(startDate);
+    const end = new Date(endDate);
+
+    while (current <= end) {
+      // 检查该日期是否已有统计数据
+      const existing = await this.prisma.dailyStatistics.findUnique({
+        where: {
+          date: current,
+        },
+      });
+
+      if (!existing) {
+        console.log(
+          `🔄 计算缺失的统计数据: ${current.toISOString().split('T')[0]}`,
+        );
+        await this.calculateDailyStatistics(new Date(current));
       }
-    }
 
-    return settledCount;
+      current.setDate(current.getDate() + 1);
+    }
   }
 }

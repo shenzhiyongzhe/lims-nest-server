@@ -23,7 +23,6 @@ model User {
   loanAccounts LoanAccount[]
   orders       Order[]
   repaymentRecords RepaymentRecord[]
-  chatSessionsAsUser ChatSession[] // 作为用户参与的聊天会话
   @@map("users")
 }
 
@@ -48,7 +47,6 @@ model Admin {
   // 添加关系
   payees       Payee[]
   loanAccountRoles LoanAccountRole[]
-  chatSessionsAsAdmin ChatSession[] // 作为管理员参与的聊天会话
 
   @@map("admins")
 }
@@ -272,49 +270,65 @@ model Feedback {
   @@index([status, created_at])
 }
 
+model DailyStatistics {
+  id                      Int      @id @default(autoincrement())
+  date                    DateTime @db.Date
+  total_amount            Decimal  @db.Decimal(12, 2)
+  payee_amount            Decimal  @db.Decimal(12, 2)
+  collector_amount        Decimal  @db.Decimal(12, 2)
+  risk_controller_amount  Decimal  @db.Decimal(12, 2)
+  transaction_count       Int
+  created_at              DateTime @default(now())
+  updated_at              DateTime @updatedAt
+
+  @@unique([date])
+  @@index([date])
+  @@map("daily_statistics")
+}
+
+// Visitor tracking enums
+enum VisitorType {
+  admin
+  user
+}
+
+enum VisitorAction {
+  login
+  page_view
+  submit_order
+}
+
+// Visitor activity log
+model VisitorLog {
+  id            Int           @id @default(autoincrement())
+  visitor_type  VisitorType
+  visitor_id    Int           // admin_id or user_id
+  action_type   VisitorAction
+  page_url      String?       @db.VarChar(255)
+  ip_address    String?       @db.VarChar(45)
+  user_agent    String?       @db.VarChar(500)
+  created_at    DateTime      @default(now())
+
+  @@index([visitor_type, created_at])
+  @@index([visitor_id, created_at])
+  @@index([created_at])
+  @@map("visitor_logs")
+}
+
+// Daily visitor statistics
+model DailyVisitorStats {
+  id                    Int      @id @default(autoincrement())
+  date                  DateTime @db.Date
+  admin_total_visits    Int      @default(0)
+  admin_unique_visitors Int      @default(0)
+  user_total_visits     Int      @default(0)
+  user_unique_visitors  Int      @default(0)
+  created_at            DateTime @default(now())
+  updated_at            DateTime @updatedAt
+
+  @@unique([date])
+  @@index([date])
+  @@map("daily_visitor_stats")
+}
+
 // 聊天消息类型
-enum MessageType {
-  text
-  image
-}
-
-// 聊天会话表
-model ChatSession {
-  id          String   @id @default(cuid())
-  admin_id    Int      // 管理员ID
-  user_id     Int      // 用户ID
-  admin_client_id String? // 管理员客户端ID
-  user_client_id  String? // 用户客户端ID
-  created_at  DateTime @default(now())
-  updated_at  DateTime @updatedAt
-  last_message_at DateTime @default(now())
-
-  // 关系
-  admin        Admin       @relation(fields: [admin_id], references: [id], onDelete: Cascade)
-  user         User        @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  messages     ChatMessage[]
-
-  @@unique([admin_client_id, user_client_id])
-  @@map("chat_sessions")
-  @@index([admin_id, admin_client_id, updated_at])
-  @@index([user_id, user_client_id, updated_at])
-}
-
-// 聊天消息表
-model ChatMessage {
-  id            String      @id @default(cuid())
-  session_id    String      // 聊天会话ID
-  sender_id     Int         // 发送者ID（可能是admin或user）
-  sender_type   String      @db.VarChar(10) // 'admin' 或 'user'
-  message_type  MessageType @default(text)
-  content       String      @db.Text // 文字内容或图片URL
-  is_read       Boolean     @default(false)
-  created_at    DateTime    @default(now())
-
-  // 关系
-  session ChatSession @relation(fields: [session_id], references: [id], onDelete: Cascade)
-
-  @@map("chat_messages")
-  @@index([session_id, created_at])
-  @@index([sender_id, created_at])
-}

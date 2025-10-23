@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreatePayeeDto } from './create-payee.dto';
-import { Payee, PaymentMethod } from '@prisma/client';
+import { Payee, PaymentMethod, QrCode } from '@prisma/client';
 import { UploadResponseDto } from './dto/upload-response.dto';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
@@ -158,5 +158,11 @@ export class PayeesService {
       qrcode_url: uploaded.url,
     });
     return created;
+  }
+  updateQRCode(id: number, data: { active: boolean }): Promise<QrCode> {
+    return this.prisma.qrCode.update({ where: { id }, data });
+  }
+  deleteQRCode(id: number): Promise<QrCode | null> {
+    return this.prisma.qrCode.delete({ where: { id } });
   }
 }

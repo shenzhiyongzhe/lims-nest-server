@@ -35,8 +35,6 @@ export class PayeesController {
     const resData = payees.map((p) => this.payeesService.toResponse(p));
     return ResponseHelper.success(resData, '获取收款人成功');
   }
-
-  // GET /payees/qrcode?payee_id=&payment_method=&active=
   @Get('qrcode')
   async getQRCodes(
     @Query('payee_id') payee_id: number,
@@ -51,16 +49,6 @@ export class PayeesController {
     return ResponseHelper.success(rows, '获取二维码成功');
   }
 
-  // POST /payees/qrcode
-  @UseGuards(AuthGuard, RolesGuard)
-  @Post('qrcode')
-  async createQRCode(
-    @CurrentUser() user: { id: number },
-    @Body() body: { qrcode_type: PaymentMethod; qrcode_url: string },
-  ): Promise<ApiResponseDto> {
-    const created = await this.payeesService.createQRCode(user.id, body);
-    return ResponseHelper.success(created, '创建二维码成功');
-  }
   @Get(':id')
   async findById(
     @Param('id', ParseIntPipe) id: number,
@@ -72,12 +60,47 @@ export class PayeesController {
     const resData = this.payeesService.toResponse(payee);
     return ResponseHelper.success(resData, '获取收款人成功');
   }
+
   @Post()
   async create(@Body() data: CreatePayeeDto): Promise<ApiResponseDto> {
     const payee = await this.payeesService.create(data);
     const resData = this.payeesService.toResponse(payee);
     return ResponseHelper.success(resData, '创建收款人成功');
   }
+
+  @Put(':id')
+  async update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() data: CreatePayeeDto,
+  ): Promise<ApiResponseDto> {
+    const payee = await this.payeesService.update(id, data);
+    const resData = this.payeesService.toResponse(payee);
+    return ResponseHelper.success(resData, '更新收款人成功');
+  }
+
+  @Delete(':id')
+  async delete(@Param('id', ParseIntPipe) id: number): Promise<ApiResponseDto> {
+    const payee = await this.payeesService.delete(id);
+    if (!payee) {
+      throw new NotFoundException('收款人不存在');
+    }
+    const resData = this.payeesService.toResponse(payee);
+    return ResponseHelper.success(resData, '删除收款人成功');
+  }
+
+  // GET /payees/qrcode?payee_id=&payment_method=&active=
+
+  // POST /payees/qrcode
+  @UseGuards(AuthGuard, RolesGuard)
+  @Post('qrcode')
+  async createQRCode(
+    @CurrentUser() user: { id: number },
+    @Body() body: { qrcode_type: PaymentMethod; qrcode_url: string },
+  ): Promise<ApiResponseDto> {
+    const created = await this.payeesService.createQRCode(user.id, body);
+    return ResponseHelper.success(created, '创建二维码成功');
+  }
+
   @UseGuards(AuthGuard, RolesGuard)
   @Post('upload')
   @UseInterceptors(FileInterceptor('file'))
@@ -101,22 +124,26 @@ export class PayeesController {
       return ResponseHelper.error(error.message, 400);
     }
   }
-  @Put(':id')
-  async update(
+
+  @UseGuards(AuthGuard, RolesGuard)
+  @Put('qrcode/:id')
+  async updateQRCode(
     @Param('id', ParseIntPipe) id: number,
-    @Body() data: CreatePayeeDto,
+    @Body() data: { active: boolean },
   ): Promise<ApiResponseDto> {
-    const payee = await this.payeesService.update(id, data);
-    const resData = this.payeesService.toResponse(payee);
-    return ResponseHelper.success(resData, '更新收款人成功');
+    const qrcode = await this.payeesService.updateQRCode(id, data);
+    return ResponseHelper.success(qrcode, '更新二维码成功');
   }
-  @Delete(':id')
-  async delete(@Param('id', ParseIntPipe) id: number): Promise<ApiResponseDto> {
-    const payee = await this.payeesService.delete(id);
-    if (!payee) {
-      throw new NotFoundException('收款人不存在');
+
+  @UseGuards(AuthGuard, RolesGuard)
+  @Delete('qrcode/:id')
+  async deleteQRCode(
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<ApiResponseDto> {
+    const qrcode = await this.payeesService.deleteQRCode(id);
+    if (!qrcode) {
+      throw new NotFoundException('二维码不存在');
     }
-    const resData = this.payeesService.toResponse(payee);
-    return ResponseHelper.success(resData, '删除收款人成功');
+    return ResponseHelper.success(qrcode, '删除二维码成功');
   }
 }

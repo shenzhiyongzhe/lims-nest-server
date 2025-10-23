@@ -2,22 +2,20 @@ import { Controller, Get, UseGuards } from '@nestjs/common';
 import { AuthGuard } from './auth.guard';
 import { CurrentUser } from './current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ResponseHelper } from 'src/common/response-helper';
+import { ApiResponseDto } from 'src/common/dto/api-response.dto';
 
 @Controller('auth')
 export class AuthController {
   constructor(private readonly prisma: PrismaService) {}
 
   @Get('verify')
+  @UseGuards(AuthGuard)
   async verify(
     @CurrentUser() user: { id: number; role: string } | null,
-  ): Promise<{
-    message: string;
-    valid: boolean;
-    data: any;
-    client_id?: string;
-  }> {
+  ): Promise<ApiResponseDto<any>> {
     if (!user) {
-      return { message: '未登录', valid: false, data: null };
+      return ResponseHelper.error('未登录', 401);
     }
 
     // If role is 管理员, enrich from DB (keeps existing behavior)
@@ -27,30 +25,16 @@ export class AuthController {
         select: { id: true, username: true, phone: true, role: true },
       });
       if (!admin) {
-        return { message: '用户不存在', valid: false, data: null };
+        return ResponseHelper.error('用户不存在', 404);
       }
-      return {
-        message: '验证成功',
-        valid: true,
-        data: admin,
-        client_id: this.generateClientId(admin.id),
-      };
+      return ResponseHelper.success(
+        { code: 200, message: '验证成功', valid: true, data: admin },
+        '验证成功',
+      );
     }
-
-    // For non-admin, return minimal unified identity
-    return { message: '验证成功', valid: true, data: user };
-  }
-
-  /**
-   * 生成唯一的客户端ID
-   * 管理员的客户端ID基于管理员ID固定不变
-   */
-  private generateClientId(userId?: number): string {
-    if (userId) {
-      // 管理员的客户端ID基于管理员ID固定
-      return `admin_client_${userId}`;
-    }
-    // 普通用户的客户端ID随机生成
-    return `user_client_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    return ResponseHelper.success(
+      { code: 200, message: '验证成功', valid: true, data: user },
+      '验证成功',
+    );
   }
 }

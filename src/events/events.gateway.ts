@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-unsafe-call */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import {
   WebSocketGateway,
   WebSocketServer,
@@ -24,7 +26,8 @@ interface WebSocketClient extends Socket {
     origin: '*',
     credentials: true,
   },
-  namespace: '/',
+  namespace: '/events',
+  transports: ['websocket', 'polling'],
 })
 export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
@@ -76,12 +79,14 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   async handleConnection(client: WebSocketClient, ...args: any[]) {
-    console.log('🔌 WebSocket客户端连接:', {
-      clientId: client.id,
-      query: client.handshake.query,
-      headers: client.handshake.headers,
-      address: client.handshake.address,
-    });
+    // console.log('🔌 WebSocket客户端连接:', {
+    //   clientId: client.id,
+    //   query: client.handshake.query,
+    //   headers: client.handshake.headers,
+    //   address: client.handshake.address,
+    //   url: client.handshake.url,
+    //   namespace: client.nsp.name,
+    // });
 
     // 从查询参数获取连接信息
     const query = client.handshake.query;
@@ -89,15 +94,18 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const userIdQuery = query.user_id as string;
     const adminIdQuery = query.admin_id as string;
 
-    console.log('📋 连接参数解析:', {
-      type,
-      userIdQuery,
-      adminIdQuery,
-      isValidType: type === 'payee' || type === 'customer',
-    });
-
     if (!type || (type !== 'payee' && type !== 'customer')) {
-      console.error('❌ 无效的连接类型:', type);
+      console.error('❌ 无效的连接类型:', {
+        type,
+        validTypes: ['payee', 'customer'],
+        allQueryParams: query,
+      });
+      client.emit('error', {
+        type: 'connection_error',
+        data: {
+          message: `Invalid connection type: ${type}. Must be 'payee' or 'customer'`,
+        },
+      });
       client.disconnect();
       return;
     }
@@ -105,35 +113,53 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     let payeeId: number | undefined;
     if (type === 'payee') {
       const adminId = adminIdQuery ? Number(adminIdQuery) : undefined;
-      console.log('🔍 收款人连接 - 管理员ID:', adminId);
 
       if (!adminId || !Number.isFinite(adminId)) {
-        console.error('❌ 收款人连接缺少或无效的admin_id:', adminIdQuery);
+        console.error('❌ 收款人连接缺少或无效的admin_id:', {
+          adminIdQuery,
+          parsedAdminId: adminId,
+          isFinite: Number.isFinite(adminId),
+        });
+        client.emit('error', {
+          type: 'connection_error',
+          data: { message: `Missing or invalid admin_id: ${adminIdQuery}` },
+        });
         client.disconnect();
         return;
       }
 
-      console.log('�� 查找管理员绑定的收款人...');
       const foundPayeeId = await this.eventsService.findPayeeIdByAdmin(adminId);
-      console.log('�� 查找结果:', { adminId, foundPayeeId });
 
       if (!foundPayeeId) {
-        console.error('❌ 该管理员未绑定收款人:', adminId);
+        console.error('❌ 该管理员未绑定收款人:', {
+          adminId,
+          foundPayeeId,
+        });
+        client.emit('error', {
+          type: 'connection_error',
+          data: { message: `Admin ${adminId} is not bound to any payee` },
+        });
         client.disconnect();
         return;
       }
       payeeId = foundPayeeId;
-      console.log('✅ 找到收款人ID:', payeeId);
     }
 
     if (type === 'customer' && !userIdQuery) {
-      console.error('❌ 客户连接缺少user_id');
+      console.error('❌ 客户连接缺少user_id:', {
+        type,
+        userIdQuery,
+        allQueryParams: query,
+      });
+      client.emit('error', {
+        type: 'connection_error',
+        data: { message: 'Customer connection missing user_id' },
+      });
       client.disconnect();
       return;
     }
 
     const userId = userIdQuery ? Number(userIdQuery) : undefined;
-    console.log('�� 添加连接到服务:', { type, payeeId, userId });
 
     const connectionId = this.eventsService.addConnection(type, client, {
       payeeId,
@@ -182,6 +208,7 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() data: unknown,
   ) {
     try {
+      console.log('📥 提交订单请求数据:', data);
       const payload = this.buildSubmitOrderPayload(data);
       const result = await this.eventsService.submitOrder(payload);
 
@@ -192,7 +219,7 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
       });
 
       return result;
-    } catch (error) {
+    } catch (error: any) {
       client.emit('error', {
         type: 'error',
         data: { message: error.message || '提交订单失败' },
@@ -207,6 +234,7 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() data: { id: string; admin_id: number },
   ) {
     try {
+      console.log('🎯 抢单请求数据:', data);
       const adminId = data?.admin_id ? Number(data.admin_id) : undefined;
       if (!adminId || !Number.isFinite(adminId)) {
         throw new Error('Missing or invalid admin_id in request body');
@@ -234,13 +262,43 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
       );
 
       // 如果抢单成功，通知客户
-      if (result.success && client.userId) {
+      if (result.success && order.customer_id) {
         const customerConnectionId = this.eventsService.getCustomerConnectionId(
-          client.userId,
+          order.customer_id,
         );
+        console.log('📨 尝试通知客户:', {
+          customerId: order.customer_id,
+          connectionId: customerConnectionId,
+        });
+        let customerSocket: Socket | undefined;
+
         if (customerConnectionId) {
-          const customerSocket =
-            this.server.sockets.sockets.get(customerConnectionId);
+          try {
+            const serverSockets = (this.server as any).sockets;
+            console.log('🔍 server.sockets snapshot:', {
+              type: typeof serverSockets,
+              hasSocketsField: !!serverSockets?.sockets,
+              socketsIsMap: serverSockets?.sockets instanceof Map,
+            });
+            // 常见结构 1: this.server.sockets 是 namespace，内部有 .sockets (Map or object)
+            if (serverSockets) {
+              if (typeof serverSockets.get === 'function') {
+                // 直接是 Map-like
+                customerSocket = serverSockets.get(customerConnectionId);
+              } else if (serverSockets.sockets) {
+                const inner = serverSockets.sockets;
+                if (inner instanceof Map) {
+                  customerSocket = inner.get(customerConnectionId);
+                } else {
+                  // plain object keyed by socket id
+                  customerSocket = inner[customerConnectionId];
+                }
+              }
+            }
+          } catch (e) {
+            console.error('🔴 获取 customer socket 时发生异常:', e);
+          }
+
           if (customerSocket) {
             customerSocket.emit('order_grabbed', {
               type: 'order_grabbed',
@@ -250,6 +308,12 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
                 payeeName: result.payeeName,
               },
             });
+            console.log('✅ 已发送抢单通知给客户:', order.customer_id);
+          } else {
+            console.log(
+              '❌ 未找到客户的socket连接（兼容检索失败）:',
+              customerConnectionId,
+            );
           }
         }
       }

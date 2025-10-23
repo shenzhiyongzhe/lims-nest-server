@@ -43,8 +43,6 @@ async function bootstrap() {
 
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
-
-  console.log(`Server is running on port ${process.env.PORT ?? 3000}`);
 }
 
 bootstrap();

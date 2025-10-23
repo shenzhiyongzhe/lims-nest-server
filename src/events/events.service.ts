@@ -30,10 +30,8 @@ export class EventsService {
   ): string {
     const connectionId = socket.id;
     this.wsConnections.set(connectionId, socket);
-
     if (type === 'payee' && opts.payeeId) {
       this.payeeConnections.set(opts.payeeId, connectionId);
-      console.log(`✅ 收款人 ${opts.payeeId} 已连接，连接ID: ${connectionId}`);
       console.log(
         `📊 当前活跃的收款人连接:`,
         Array.from(this.payeeConnections.keys()),
@@ -313,36 +311,41 @@ export class EventsService {
   }
 
   private async broadcastOrder(orderData: OrderPayload) {
-    console.log('📤 开始广播订单:', orderData.id);
     const priorities = await this.calculatePayeePriority(orderData);
-    console.log('📊 计算出的收款人优先级:', priorities.length, '个收款人');
+    // 使用 Promise.all 处理所有延迟发送的消息
+    await Promise.all(
+      priorities.map(async ({ payee, delay }) => {
+        const connectionId = this.payeeConnections.get(payee.id);
+        console.log(`🔍 查找收款人 ${payee.id} 的连接ID:`, connectionId);
 
-    for (const { payee } of priorities) {
-      const connectionId = this.payeeConnections.get(payee.id);
-      console.log(`🔍 查找收款人 ${payee.id} 的连接ID:`, connectionId);
+        if (connectionId) {
+          const message = {
+            type: 'new_order',
+            data: {
+              id: orderData.id,
+              loan_id: orderData.loan_id,
+              customer_id: orderData.customer_id,
+              customer: orderData.customer,
+              payment_periods: orderData.payment_periods,
+              amount: orderData.amount,
+              payment_method: orderData.payment_method,
+              remark: orderData.remark,
+              timestamp: new Date().toISOString(),
+            },
+          };
 
-      if (connectionId) {
-        const message = {
-          type: 'new_order',
-          data: {
-            id: orderData.id,
-            loan_id: orderData.loan_id,
-            customer_id: orderData.customer_id,
-            customer: orderData.customer,
-            payment_periods: orderData.payment_periods,
-            amount: orderData.amount,
-            payment_method: orderData.payment_method,
-            remark: orderData.remark,
-            timestamp: new Date().toISOString(),
-          },
-        };
-
-        console.log(`📨 发送订单通知给收款人 ${payee.id}:`, message);
-        this.sendToConnection(connectionId, message);
-      } else {
-        console.log(`❌ 收款人 ${payee.id} 没有活跃连接`);
-      }
-    }
+          // 使用 setTimeout 实现延迟发送
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          console.log(
+            `📨 发送订单通知给收款人 ${payee.id} (延迟 ${delay}ms):`,
+            message,
+          );
+          this.sendToConnection(connectionId, message);
+        } else {
+          console.log(`❌ 收款人 ${payee.id} 没有活跃连接`);
+        }
+      }),
+    );
   }
 
   async findPayeeIdByAdmin(adminId: number): Promise<number | null> {

@@ -25,6 +25,30 @@ export class RepaymentSchedulesService {
         loan_account: {
           include: {
             user: true,
+            risk_controller: {
+              select: {
+                id: true,
+                username: true,
+              },
+            },
+            collector: {
+              select: {
+                id: true,
+                username: true,
+              },
+            },
+            payee: {
+              select: {
+                id: true,
+                username: true,
+              },
+            },
+            lender: {
+              select: {
+                id: true,
+                username: true,
+              },
+            },
           },
         },
       },
@@ -64,6 +88,30 @@ export class RepaymentSchedulesService {
         loan_account: {
           include: {
             user: true,
+            risk_controller: {
+              select: {
+                id: true,
+                username: true,
+              },
+            },
+            collector: {
+              select: {
+                id: true,
+                username: true,
+              },
+            },
+            payee: {
+              select: {
+                id: true,
+                username: true,
+              },
+            },
+            lender: {
+              select: {
+                id: true,
+                username: true,
+              },
+            },
           },
         },
       },
@@ -103,10 +151,11 @@ export class RepaymentSchedulesService {
             total_periods: schedule.loan_account.total_periods,
             repaid_periods: schedule.loan_account.repaid_periods,
             daily_repayment: Number(schedule.loan_account.daily_repayment),
-            risk_controller: schedule.loan_account.risk_controller,
-            collector: schedule.loan_account.collector,
-            payee: schedule.loan_account.payee,
-            lender: schedule.loan_account.lender,
+            risk_controller:
+              schedule.loan_account.risk_controller?.username || '',
+            collector: schedule.loan_account.collector?.username || '',
+            payee: schedule.loan_account.payee?.username || '',
+            lender: schedule.loan_account.lender?.username || '',
             // 用户信息
             user: schedule.loan_account.user
               ? {

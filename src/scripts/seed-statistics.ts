@@ -25,17 +25,18 @@ async function seedStatistics() {
 
       // 检查是否已存在该日期的数据
       const existing = await prisma.dailyStatistics.findUnique({
-        where: { date },
+        where: { admin_id_date: { admin_id: 1, date } },
       });
 
       if (!existing) {
         await prisma.dailyStatistics.create({
           data: {
+            admin_id: 1,
+            admin_name: 'admin',
             date,
-            total_amount: payeeAmount,
+            total_amount: baseAmount,
             payee_amount: payeeAmount,
-            collector_amount: collectorAmount,
-            risk_controller_amount: riskControllerAmount,
+            receiving_amount: collectorAmount,
             transaction_count: transactionCount,
           },
         });

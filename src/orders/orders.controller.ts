@@ -58,4 +58,25 @@ export class OrdersController {
     );
     return ResponseHelper.success(updated, '更新订单成功');
   }
+
+  @Post('partial-payment')
+  async partialPayment(
+    @CurrentUser() user: { id: number },
+    @Body() body: { id: string; paid_amount: number },
+  ): Promise<ApiResponseDto> {
+    if (!body.id || !body.paid_amount) {
+      return ResponseHelper.error('缺少必要参数', 400);
+    }
+
+    if (body.paid_amount <= 0) {
+      return ResponseHelper.error('支付金额必须大于0', 400);
+    }
+
+    const updated = await this.ordersService.partialPayment(
+      user.id,
+      body.id,
+      body.paid_amount,
+    );
+    return ResponseHelper.success(updated, '部分还清成功');
+  }
 }

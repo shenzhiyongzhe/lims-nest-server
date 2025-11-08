@@ -17,7 +17,6 @@ import { CronJobsModule } from './cron/cron.module';
 import { StatisticsModule } from './statistics/statistics.module';
 import { RepaymentRecordsModule } from './repayment-records/repayment-records.module';
 import { LoanAccountRolesModule } from './loanAccountRoles/loanAccountRoles.module';
-import { VisitorsModule } from './visitors/visitors.module';
 import { OperationLogsModule } from './operation-logs/operation-logs.module';
 @Module({
   imports: [
@@ -39,7 +38,6 @@ import { OperationLogsModule } from './operation-logs/operation-logs.module';
     StatisticsModule,
     RepaymentRecordsModule,
     LoanAccountRolesModule,
-    VisitorsModule,
     OperationLogsModule,
   ],
   controllers: [AppController],

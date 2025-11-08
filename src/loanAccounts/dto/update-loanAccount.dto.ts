@@ -1,49 +1,49 @@
 import {
   IsDateString,
   IsNumber,
-  IsString,
   IsOptional,
   IsEnum,
   Min,
   Max,
-  Length,
   IsPositive,
 } from 'class-validator';
-import { RepaymentScheduleStatus } from '@prisma/client';
+import { LoanAccountStatus } from '@prisma/client';
 
-export class CreateLoanAccountDto {
+export class UpdateLoanAccountDto {
   @IsNumber()
   @IsPositive()
-  user_id: number;
-
-  @IsNumber()
-  @IsPositive()
+  @IsOptional()
   @Min(100)
   @Max(1000000)
-  loan_amount: number;
+  loan_amount?: number;
 
   @IsNumber()
   @IsPositive()
-  @Max(1000000)
-  to_hand_ratio: number;
-
-  @IsNumber()
-  @IsPositive()
-  capital: number;
-
-  @IsNumber()
-  @IsPositive()
-  interest: number;
-
-  @IsDateString()
-  due_start_date: string;
-
-  @IsDateString()
-  due_end_date: string;
-
-  @IsEnum(RepaymentScheduleStatus)
   @IsOptional()
-  status?: RepaymentScheduleStatus;
+  @Max(1000000)
+  to_hand_ratio?: number;
+
+  @IsNumber()
+  @IsPositive()
+  @IsOptional()
+  capital?: number;
+
+  @IsNumber()
+  @IsPositive()
+  @IsOptional()
+  interest?: number;
+
+  @IsDateString()
+  @IsOptional()
+  due_start_date?: string;
+
+  @IsDateString()
+  @IsOptional()
+  due_end_date?: string;
+
+  @IsEnum(LoanAccountStatus)
+  @IsOptional()
+  status?: LoanAccountStatus;
 
   @IsNumber()
   @IsPositive()
@@ -52,9 +52,10 @@ export class CreateLoanAccountDto {
 
   @IsNumber()
   @IsPositive()
+  @IsOptional()
   @Min(1)
   @Max(365)
-  total_periods: number;
+  total_periods?: number;
 
   @IsNumber()
   @Min(0)
@@ -63,23 +64,28 @@ export class CreateLoanAccountDto {
 
   @IsNumber()
   @IsPositive()
-  daily_repayment: number;
+  @IsOptional()
+  daily_repayment?: number;
 
   @IsNumber()
   @IsPositive()
-  risk_controller_id: number;
+  @IsOptional()
+  risk_controller_id?: number;
 
   @IsNumber()
   @IsPositive()
-  collector_id: number;
+  @IsOptional()
+  collector_id?: number;
 
   @IsNumber()
   @IsPositive()
-  payee_id: number;
+  @IsOptional()
+  payee_id?: number;
 
   @IsNumber()
   @IsPositive()
-  lender_id: number;
+  @IsOptional()
+  lender_id?: number;
 
   @IsNumber()
   @IsOptional()
@@ -89,3 +95,4 @@ export class CreateLoanAccountDto {
   @IsOptional()
   company_cost?: number;
 }
+

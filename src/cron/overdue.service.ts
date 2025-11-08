@@ -24,7 +24,17 @@ export class OverdueService {
       select: {
         id: true,
         loan_id: true,
-        loan_account: { select: { user_id: true, collector: true } },
+        loan_account: {
+          select: {
+            user_id: true,
+            collector_id: true,
+            collector: {
+              select: {
+                username: true,
+              },
+            },
+          },
+        },
       },
     });
 
@@ -40,9 +50,9 @@ export class OverdueService {
       .filter((s) => !existingSet.has(s.id))
       .map((s) => ({
         schedule_id: s.id,
-        user_id: 0, // 可按需扩充：通过 loan_id -> user_id
+        user_id: s.loan_account.user_id,
         loan_id: s.loan_id,
-        collector: s.loan_account.collector,
+        collector: s.loan_account.collector?.username || '',
         overdue_date: new Date(),
       }));
 

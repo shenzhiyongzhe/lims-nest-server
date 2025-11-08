@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Put,
   Body,
   Param,
   ParseIntPipe,
@@ -11,6 +12,7 @@ import {
 } from '@nestjs/common';
 import { LoanAccountsService } from './loanAccounts.service';
 import { CreateLoanAccountDto } from './dto/create-loanAccount.dto';
+import { UpdateLoanAccountDto } from './dto/update-loanAccount.dto';
 import { AuthGuard } from '../auth/auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -77,9 +79,9 @@ export class LoanAccountsController {
     @CurrentUser() user: { id: number },
   ): Promise<ApiResponseDto> {
     try {
-      const { due_start_date, total_periods, collector, payee } = body;
+      const { due_start_date, total_periods, collector_id, payee_id } = body;
 
-      if (!due_start_date || !total_periods || !collector || !payee) {
+      if (!due_start_date || !total_periods || !collector_id || !payee_id) {
         return ResponseHelper.error('缺少必要参数', 400);
       }
 
@@ -92,6 +94,22 @@ export class LoanAccountsController {
       console.error('创建贷款记录错误:', error);
 
       return ResponseHelper.error(`创建贷款记录失败: ${error.message}`, 500);
+    }
+  }
+
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(ManagementRoles.管理员)
+  @Put(':id')
+  async update(
+    @Param('id') id: string,
+    @Body() body: UpdateLoanAccountDto,
+  ): Promise<ApiResponseDto> {
+    try {
+      const updated = await this.loanAccountsService.update(id, body);
+      return ResponseHelper.success(updated, '更新贷款记录成功');
+    } catch (error: any) {
+      console.error('更新贷款记录错误:', error);
+      return ResponseHelper.error(`更新贷款记录失败: ${error.message}`, 500);
     }
   }
 }

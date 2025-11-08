@@ -5,6 +5,7 @@ import {
   NotFoundException,
   ParseIntPipe,
   UseGuards,
+  UseInterceptors,
   Body,
   Put,
   Query,
@@ -21,9 +22,11 @@ import type {
   RepaymentScheduleStatus,
 } from '@prisma/client';
 import { LoanAccountsService } from '../loanAccounts/loanAccounts.service';
+import { OperationLogsInterceptor } from '../operation-logs/operation-logs.interceptor';
 
 @Controller('repayment-schedules')
 @UseGuards(AuthGuard, RolesGuard)
+@UseInterceptors(OperationLogsInterceptor)
 export class RepaymentSchedulesController {
   constructor(
     private readonly repaymentSchedulesService: RepaymentSchedulesService,

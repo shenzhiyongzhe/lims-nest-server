@@ -6,6 +6,7 @@ import {
   Param,
   ParseIntPipe,
   UseGuards,
+  UseInterceptors,
   Query,
 } from '@nestjs/common';
 import { LoanAccountsService } from './loanAccounts.service';
@@ -17,8 +18,10 @@ import { ResponseHelper } from 'src/common/response-helper';
 import { ApiResponseDto } from 'src/common/dto/api-response.dto';
 import { Roles } from 'src/auth/roles.decorator';
 import { LoanAccountStatus, ManagementRoles } from '@prisma/client';
+import { OperationLogsInterceptor } from '../operation-logs/operation-logs.interceptor';
 
 @Controller('loan-accounts')
+@UseInterceptors(OperationLogsInterceptor)
 export class LoanAccountsController {
   constructor(private readonly loanAccountsService: LoanAccountsService) {}
   @UseGuards(AuthGuard, RolesGuard)

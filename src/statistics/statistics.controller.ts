@@ -4,6 +4,7 @@ import { GetStatisticsDto } from './dto/get-statistics.dto';
 import { CalculateStatisticsDto } from './dto/calculate-statistics.dto';
 import { AuthGuard } from '../auth/auth.guard';
 import { ResponseHelper } from 'src/common/response-helper';
+import { CurrentUser } from '../auth/current-user.decorator';
 
 @Controller('statistics')
 @UseGuards(AuthGuard)
@@ -30,6 +31,12 @@ export class StatisticsController {
       parsedEndDate,
     );
     return ResponseHelper.success(statistics, '统计数据获取成功');
+  }
+
+  @Get('collector-report')
+  async getCollectorReport(@CurrentUser() user: { id: number; role: string }) {
+    const report = await this.statisticsService.getCollectorReport(user.id);
+    return ResponseHelper.success(report, '收款人报表获取成功');
   }
 
   @Post('calculate')

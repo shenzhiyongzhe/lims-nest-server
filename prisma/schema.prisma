@@ -331,4 +331,31 @@ model DailyVisitorStats {
   @@map("daily_visitor_stats")
 }
 
+// Operation log types
+enum OperationType {
+  CREATE
+  UPDATE
+  DELETE
+}
+
+// Operation logs for tracking entity changes
+model OperationLog {
+  id             Int           @id @default(autoincrement())
+  entity_type    String        @db.VarChar(50)  // 'LoanAccount', 'RepaymentSchedule', etc.
+  entity_id      String        @db.VarChar(255) // ID of the entity
+  operation_type OperationType
+  admin_id       Int
+  admin_username String        @db.VarChar(50)
+  old_data       String?       @db.Text         // JSON string of old data
+  new_data       String?       @db.Text         // JSON string of new data
+  ip_address     String?       @db.VarChar(45)
+  created_at     DateTime      @default(now())
+
+  @@index([entity_type, created_at])
+  @@index([admin_id, created_at])
+  @@index([created_at])
+  @@index([operation_type])
+  @@map("operation_logs")
+}
+
 // 聊天消息类型

@@ -40,7 +40,6 @@ export class AuthGuard implements CanActivate {
     // 将用户信息和客户端ID添加到请求对象中
     request.user = { id: parseInt(admin_id), role: admin_role };
     request.clientId = client_id;
-
     return true;
   }
 }

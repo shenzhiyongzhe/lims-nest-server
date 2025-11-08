@@ -1,5 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-call */
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import {
   WebSocketGateway,
   WebSocketServer,
@@ -298,6 +296,12 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
           } catch (e) {
             console.error('🔴 获取 customer socket 时发生异常:', e);
           }
+          client.emit('grab_order_result', {
+            type: 'grab_order_result',
+            code: 200,
+            data: result,
+            message: result.success ? '抢单成功' : '抢单处理完成',
+          });
 
           if (customerSocket) {
             customerSocket.emit('order_grabbed', {

@@ -255,7 +255,7 @@ export class EventsService {
       });
       if (historyCount > 0) {
         priority += 1000;
-        delay = 0;
+        delay = 1;
       }
 
       if (
@@ -264,7 +264,7 @@ export class EventsService {
         customer.address === payee.address
       ) {
         priority += 500;
-        if (delay === 0) delay = 10_000;
+        delay = 10_000;
       }
 
       const today = new Date();
@@ -303,7 +303,7 @@ export class EventsService {
     console.log(
       `📋 最终收款人优先级排序:`,
       sortedPriorities.map(
-        (p) => `${p.payee.id}(${p.payee.username}):${p.priority}`,
+        (p) => `${p.payee.id}(${p.payee.username}):${p.priority}:${p.delay}`,
       ),
     );
 

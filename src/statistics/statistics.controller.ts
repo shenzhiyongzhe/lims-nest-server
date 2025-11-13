@@ -74,27 +74,8 @@ export class StatisticsController {
   @UseGuards(RolesGuard)
   @Roles(ManagementRoles.管理员)
   async getAdminStatistics() {
-    // 使用业务日期：6点后算当天，6点前算前一天
-    const now = new Date();
-    // 获取业务日期（6点前算前一天）
-    const businessDate = new Date(now);
-    if (now.getHours() < 6) {
-      businessDate.setDate(now.getDate() - 1);
-    }
-    businessDate.setHours(0, 0, 0, 0);
-
-    // 检查当天数据是否存在，如果不存在则异步触发统计
-    const hasData =
-      await this.statisticsService.checkTodayStatisticsExists(businessDate);
-    if (!hasData) {
-      // 异步触发统计计算，不阻塞请求
-      this.statisticsService
-        .calculateDailyStatistics(businessDate)
-        .catch((err) => {
-          console.error('自动触发统计计算失败:', err);
-        });
-    }
-
+    // getAdminStatistics 方法内部已经处理了数据不存在的情况
+    // 如果数据不存在，会自动创建默认统计记录
     const statistics = await this.statisticsService.getAdminStatistics();
     return ResponseHelper.success(statistics, '管理员统计数据获取成功');
   }

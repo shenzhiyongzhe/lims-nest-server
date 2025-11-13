@@ -1,14 +1,15 @@
 import {
+  Body,
   Controller,
   Get,
-  Post,
-  Put,
-  Body,
   Param,
   ParseIntPipe,
+  Post,
+  Put,
+  Query,
+  Res,
   UseGuards,
   UseInterceptors,
-  Query,
 } from '@nestjs/common';
 import { LoanAccountsService } from './loanAccounts.service';
 import { CreateLoanAccountDto } from './dto/create-loanAccount.dto';
@@ -21,6 +22,7 @@ import { ApiResponseDto } from 'src/common/dto/api-response.dto';
 import { Roles } from 'src/auth/roles.decorator';
 import { LoanAccountStatus, ManagementRoles } from '@prisma/client';
 import { OperationLogsInterceptor } from '../operation-logs/operation-logs.interceptor';
+import type { Response } from 'express';
 
 @Controller('loan-accounts')
 @UseInterceptors(OperationLogsInterceptor)
@@ -33,6 +35,7 @@ export class LoanAccountsController {
     const loans = await this.loanAccountsService.findAll();
     return ResponseHelper.success(loans, '获取贷款记录成功');
   }
+  @UseGuards(AuthGuard, RolesGuard)
   @Roles(
     ManagementRoles.管理员,
     ManagementRoles.负责人,
@@ -42,6 +45,7 @@ export class LoanAccountsController {
   @Get('grouped-by-user')
   async groupedByUser(
     @Query('status') status: LoanAccountStatus,
+    @CurrentUser() user: { id: number; role: string },
   ): Promise<ApiResponseDto> {
     let statusArray: LoanAccountStatus[] = [];
     if (status) {
@@ -51,7 +55,10 @@ export class LoanAccountsController {
         statusArray = [status];
       }
     }
-    const rows = await this.loanAccountsService.findGroupedByUser(statusArray);
+    const rows = await this.loanAccountsService.findGroupedByUser(
+      statusArray,
+      user.id,
+    );
     return ResponseHelper.success(rows, '按用户分组获取成功');
   }
 
@@ -61,6 +68,28 @@ export class LoanAccountsController {
   ): Promise<ApiResponseDto> {
     const rows = await this.loanAccountsService.findByUserId(userId);
     return ResponseHelper.success(rows, '获取用户贷款记录成功');
+  }
+
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(ManagementRoles.管理员)
+  @Get('export/admin')
+  async exportAdmin(@Res() res: Response) {
+    const buffer = await this.loanAccountsService.exportAdminReport();
+    const now = new Date();
+    const fileName = `业务导出_${now.getFullYear()}${(now.getMonth() + 1)
+      .toString()
+      .padStart(2, '0')}${now.getDate().toString().padStart(2, '0')}.xlsx`;
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${encodeURIComponent(
+        fileName,
+      )}"; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+    );
+    res.send(buffer);
   }
 
   @Get(':id')

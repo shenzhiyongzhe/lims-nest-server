@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-
 @Injectable()
 export class StatisticsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -55,9 +54,7 @@ export class StatisticsService {
     // 使用日期字符串 + 中午12点（UTC），这样无论什么时区，日期部分都是正确的
     const dateForDb = new Date(dateStr + 'T12:00:00.000Z');
 
-    const startOfDay = new Date(date);
-    startOfDay.setHours(0, 0, 0, 0);
-
+    // 当天结束时刻（用于累计到当天为止的数据）
     const endOfDay = new Date(date);
     endOfDay.setHours(23, 59, 59, 999);
 
@@ -121,15 +118,11 @@ export class StatisticsService {
         for (const [adminId, stats] of adminStatsMap.entries()) {
           const loanIds = Array.from(stats.loan_account_ids);
 
-          // 计算该admin相关的repayment_records金额（当天实际收款）
+          // 计算该admin相关的repayment_records金额（累计至当天的实际收款）
           const repaymentResult = await tx.repaymentRecord.aggregate({
             where: {
               loan_id: {
                 in: loanIds,
-              },
-              paid_at: {
-                gte: startOfDay,
-                lte: endOfDay,
               },
             },
             _sum: {
@@ -140,22 +133,14 @@ export class StatisticsService {
             },
           });
 
-          // 计算当天到期的还款计划的应收金额（还未还清的部分）
-          // receiving_amount = 当天到期的还款计划中，未还清的部分（due_amount - paid_amount）
-          // 使用下一天的开始时间作为上限，确保包含当天的所有数据
-          const nextDayStart = new Date(endOfDay);
-          nextDayStart.setDate(endOfDay.getDate() + 1);
-          nextDayStart.setHours(0, 0, 0, 0);
-
           const todaySchedules = await tx.repaymentSchedule.findMany({
             where: {
               loan_id: {
                 in: loanIds,
               },
-              due_start_date: {
-                gte: startOfDay,
-                lt: nextDayStart, // 小于下一天的开始
-              },
+              // due_start_date: {
+              //   lte: endOfDay,
+              // },
             },
             select: {
               due_amount: true,
@@ -163,7 +148,7 @@ export class StatisticsService {
             },
           });
 
-          // 计算当天到期的应收金额（未还清的部分）
+          // 计算累计应收金额（未还清的部分）
           let receivingAmount = 0;
           for (const schedule of todaySchedules) {
             const dueAmount = Number(schedule.due_amount || 0);
@@ -176,7 +161,7 @@ export class StatisticsService {
 
           const payeeAmount = Number(repaymentResult._sum.paid_amount || 0);
           const transactionCount = repaymentResult._count.id;
-          const totalAmount = payeeAmount;
+          const totalAmount = payeeAmount + receivingAmount;
 
           console.log(`📈 ${stats.admin_name}(${adminId}) 统计结果:`, {
             date: date.toISOString().split('T')[0],
@@ -184,7 +169,7 @@ export class StatisticsService {
             payeeAmount,
             receivingAmount,
             transactionCount,
-            todaySchedulesCount: todaySchedules.length,
+            schedulesCountUntilToday: todaySchedules.length,
           });
 
           // 4. 保存或更新统计数据（按admin_id + date唯一）
@@ -411,6 +396,8 @@ export class StatisticsService {
     console.log(`🔍 查询统计数据:`);
     console.log(`  - businessDate: ${businessDate.toISOString()}`);
     console.log(`  - dateStr: ${dateStr}`);
+    console.log(`♻️ 重新计算当天统计数据`);
+    await this.calculateDailyStatistics(new Date(businessDate));
 
     // 直接使用原始 SQL 查询，使用 DATE() 函数比较，避免时区问题
     console.log(`  - 使用原始 SQL 查询日期: ${dateStr}`);
@@ -451,7 +438,115 @@ export class StatisticsService {
 
     console.log(`✅ 原始 SQL 查询结果: rawStats.length=${rawStats.length}`);
 
-    // 将原始 SQL 结果转换为返回格式
+    // 如果查询结果为空，尝试同步创建默认统计记录
+    if (rawStats.length === 0) {
+      console.log(`⚠️ 重新计算后仍未找到统计数据，尝试创建默认统计记录...`);
+      try {
+        const retryStats = await this.prisma.$queryRaw<
+          Array<{
+            id: number;
+            admin_id: number;
+            admin_name: string;
+            date: Date;
+            total_amount: any;
+            payee_amount: any;
+            receiving_amount: any;
+            transaction_count: number;
+            admin_id_included: number;
+            username: string;
+            role: string;
+          }>
+        >`
+          SELECT 
+            ds.id,
+            ds.admin_id,
+            ds.admin_name,
+            ds.date,
+            ds.total_amount,
+            ds.payee_amount,
+            ds.receiving_amount,
+            ds.transaction_count,
+            a.id as admin_id_included,
+            a.username,
+            a.role
+          FROM daily_statistics ds
+          INNER JOIN admins a ON ds.admin_id = a.id
+          WHERE DATE(ds.date) = ${dateStr}
+          ORDER BY ds.receiving_amount DESC
+        `;
+
+        console.log(`✅ 重新查询结果: retryStats.length=${retryStats.length}`);
+
+        // 如果仍然为空，为所有有 loan_account 关联的管理员创建默认值
+        if (retryStats.length === 0) {
+          console.log(`⚠️ 统计计算后仍然为空，创建默认统计记录...`);
+          await this.createDefaultStatistics(businessDate, dateStr);
+
+          // 再次查询
+          const finalStats = await this.prisma.$queryRaw<
+            Array<{
+              id: number;
+              admin_id: number;
+              admin_name: string;
+              date: Date;
+              total_amount: any;
+              payee_amount: any;
+              receiving_amount: any;
+              transaction_count: number;
+              admin_id_included: number;
+              username: string;
+              role: string;
+            }>
+          >`
+            SELECT 
+              ds.id,
+              ds.admin_id,
+              ds.admin_name,
+              ds.date,
+              ds.total_amount,
+              ds.payee_amount,
+              ds.receiving_amount,
+              ds.transaction_count,
+              a.id as admin_id_included,
+              a.username,
+              a.role
+            FROM daily_statistics ds
+            INNER JOIN admins a ON ds.admin_id = a.id
+            WHERE DATE(ds.date) = ${dateStr}
+            ORDER BY ds.receiving_amount DESC
+          `;
+
+          return this.formatStatistics(finalStats, dateStr);
+        }
+
+        return this.formatStatistics(retryStats, dateStr);
+      } catch (error) {
+        console.error(`❌ 创建统计记录失败:`, error);
+        // 如果创建失败，返回空数组
+        return [];
+      }
+    }
+
+    return this.formatStatistics(rawStats, dateStr);
+  }
+
+  // 格式化统计数据
+  private formatStatistics(
+    rawStats: Array<{
+      id: number;
+      admin_id: number;
+      admin_name: string;
+      date: Date;
+      total_amount: any;
+      payee_amount: any;
+      receiving_amount: any;
+      transaction_count: number;
+      admin_id_included: number;
+      username: string;
+      role: string;
+    }>,
+    dateStr: string,
+  ): any[] {
     const statistics = rawStats.map((stat) => {
       // 处理日期：确保转换为字符串格式
       let dateValue: string;
@@ -471,7 +566,6 @@ export class StatisticsService {
         date: dateValue,
         total_amount:
           Number(stat.receiving_amount || 0) + Number(stat.payee_amount || 0),
-
         payee_amount: Number(stat.payee_amount || 0),
         receiving_amount: Number(stat.receiving_amount || 0),
         transaction_count: Number(stat.transaction_count || 0),
@@ -483,6 +577,89 @@ export class StatisticsService {
     );
 
     return statistics;
+  }
+
+  // 创建默认统计记录：为所有有 loan_account 关联的管理员创建默认值（0）
+  // 注意：只创建 collector 和 risk_controller 角色的统计记录，与 calculateDailyStatistics 逻辑保持一致
+  private async createDefaultStatistics(
+    date: Date,
+    dateStr: string,
+  ): Promise<void> {
+    // 获取所有在 LoanAccountRole 表中，角色为 collector 或 risk_controller 的管理员（去重）
+    // 这与 calculateDailyStatistics 方法中的逻辑保持一致
+    const adminRoles = await this.prisma.loanAccountRole.findMany({
+      where: {
+        role_type: {
+          in: ['collector', 'risk_controller'],
+        },
+      },
+      select: {
+        admin_id: true,
+        admin: {
+          select: {
+            id: true,
+            username: true,
+            role: true,
+          },
+        },
+      },
+      distinct: ['admin_id'],
+    });
+
+    if (adminRoles.length === 0) {
+      console.log(
+        `⚠️ 没有找到任何有 loan_account 关联的 collector 或 risk_controller 管理员`,
+      );
+      return;
+    }
+
+    console.log(`📊 为 ${adminRoles.length} 个管理员创建默认统计记录`);
+
+    // 创建日期对象，使用 UTC 时间，设置为中午 12:00:00
+    const dateForDb = new Date(dateStr + 'T12:00:00.000Z');
+
+    // 使用事务批量创建默认统计记录
+    await this.prisma.$transaction(
+      async (tx) => {
+        for (const adminRole of adminRoles) {
+          const adminId = adminRole.admin_id;
+          const adminName = adminRole.admin.username;
+
+          try {
+            // 尝试创建默认记录（所有值都为0）
+            await tx.dailyStatistics.create({
+              data: {
+                admin_id: adminId,
+                admin_name: adminName,
+                date: dateForDb,
+                total_amount: 0,
+                payee_amount: 0,
+                receiving_amount: 0,
+                transaction_count: 0,
+              },
+            });
+            console.log(
+              `✅ 创建默认统计记录: admin_id=${adminId}, admin_name=${adminName}, date=${dateStr}`,
+            );
+          } catch (error: any) {
+            // 如果是唯一约束错误，说明记录已存在，跳过
+            if (error?.code === 'P2002') {
+              console.log(
+                `⚠️ 统计记录已存在: admin_id=${adminId}, date=${dateStr}`,
+              );
+            } else {
+              console.error(
+                `❌ 创建默认统计记录失败: admin_id=${adminId}, date=${dateStr}`,
+                error,
+              );
+            }
+          }
+        }
+      },
+      { timeout: 30000 },
+    );
+
+    console.log(`✅ 默认统计记录创建完成`);
   }
 
   // 检查指定admin_id在指定日期是否有统计数据
@@ -684,15 +861,35 @@ export class StatisticsService {
       },
     });
 
-    const todayOverdueCount = todaySchedules.filter(
-      (s) => s.status === 'overdue',
-    ).length;
+    // 今日已付款数量
     const todayPaidCount = todaySchedules.filter(
       (s) => s.status === 'paid',
     ).length;
+    // 今日待处理数量（pending 或 active）
     const todayPendingCount = todaySchedules.filter(
       (s) => s.status === 'pending' || s.status === 'active',
     ).length;
+
+    // 逾期统计：查询所有 due_end_date 超过当前时间且未完全支付的记录
+    // 注意：这里使用前面定义的 now 变量
+    const overdueSchedules = await this.prisma.repaymentSchedule.findMany({
+      where: {
+        loan_id: { in: loanAccountIds },
+        due_end_date: { lt: now }, // 截止日期已过
+      },
+      select: {
+        id: true,
+        due_amount: true,
+        paid_amount: true,
+      },
+    });
+
+    // 在内存中过滤出未完全支付的记录（paid_amount < due_amount）
+    const todayOverdueCount = overdueSchedules.filter((s) => {
+      const dueAmount = Number(s.due_amount || 0);
+      const paidAmount = Number(s.paid_amount || 0);
+      return paidAmount < dueAmount;
+    }).length;
 
     // 用户统计
     const totalBorrowedUsers = new Set(loanAccounts.map((a) => a.user_id)).size;

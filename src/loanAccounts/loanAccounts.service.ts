@@ -8,10 +8,18 @@ import {
 } from '@prisma/client';
 import { CreateLoanAccountDto } from './dto/create-loanAccount.dto';
 import { UpdateLoanAccountDto } from './dto/update-loanAccount.dto';
+import {
+  AdminReportDetailRow,
+  AdminReportSummaryEntry,
+  ExcelExportService,
+} from '../common/excel-export.service';
 
 @Injectable()
 export class LoanAccountsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly excelExportService: ExcelExportService,
+  ) {}
 
   findAll(): Promise<LoanAccount[]> {
     return this.prisma.loanAccount.findMany({ include: { user: true } });
@@ -37,6 +45,12 @@ export class LoanAccountsService {
 
     // 使用事务：创建贷款记录并批量创建还款计划
     const loan = await this.prisma.$transaction(async (tx) => {
+      const existingCount = await tx.loanAccount.count({
+        where: { user_id: data.user_id },
+      });
+
+      const applyTimes = existingCount + 1;
+
       const created = await tx.loanAccount.create({
         data: {
           user_id: data.user_id,
@@ -53,6 +67,7 @@ export class LoanAccountsService {
           due_end_date: endDate,
           total_periods: Number(total_periods),
           daily_repayment: Number(daily_repayment),
+          apply_times: applyTimes,
           capital: Number(capital),
           interest: Number(interest),
           status: data.status as LoanAccountStatus,
@@ -155,12 +170,62 @@ export class LoanAccountsService {
 
   async findGroupedByUser(
     status?: LoanAccountStatus[],
+    adminId?: number,
   ): Promise<Array<{ user: User; loanAccounts: LoanAccount[] }>> {
-    const where = status && status.length > 0 ? { status: { in: status } } : {};
+    // 构建基础查询条件
+    let where: any = {};
+
+    // 如果状态有值，添加状态过滤
+    if (status && status.length > 0) {
+      where.status = { in: status };
+    }
+
+    // 权限过滤：如果不是管理员，则根据 admin_id 过滤
+    if (adminId) {
+      // 从数据库查询用户角色，确保准确性
+      const admin = await this.prisma.admin.findUnique({
+        where: { id: adminId },
+        select: { role: true },
+      });
+
+      // 如果用户角色不是管理员，则根据 admin_id 过滤
+      if (admin && admin.role !== '管理员') {
+        // 查询该 admin 在 LoanAccountRole 表中关联的所有 loan_account_id
+        const loanAccountRoles = await this.prisma.loanAccountRole.findMany({
+          where: {
+            admin_id: adminId,
+          },
+          select: {
+            loan_account_id: true,
+          },
+          distinct: ['loan_account_id'],
+        });
+
+        const loanAccountIds = loanAccountRoles.map(
+          (role) => role.loan_account_id,
+        );
+
+        if (loanAccountIds.length === 0) {
+          // 如果没有关联的 loan accounts，返回空数组
+          return [];
+        }
+
+        // 添加 loan_id 过滤条件
+        where.id = { in: loanAccountIds };
+      }
+      // 如果是管理员，不添加过滤条件，可以查看所有数据
+    }
+
     const loans = await this.prisma.loanAccount.findMany({
       where,
-      include: { user: true },
-      orderBy: { user_id: 'asc' },
+      include: {
+        user: true,
+        risk_controller: { select: { id: true, username: true } },
+        collector: { select: { id: true, username: true } },
+        payee: { select: { id: true, username: true } },
+        lender: { select: { id: true, username: true } },
+      },
+      orderBy: [{ user_id: 'asc' }, { apply_times: 'asc' }],
     });
     const map = new Map<number, { user: User; loanAccounts: LoanAccount[] }>();
     for (const loan of loans) {
@@ -345,5 +410,235 @@ export class LoanAccountsService {
     }
 
     return updated;
+  }
+
+  async exportAdminReport(): Promise<Buffer> {
+    const loans = await this.prisma.loanAccount.findMany({
+      include: {
+        user: {
+          select: {
+            username: true,
+          },
+        },
+        collector: {
+          select: {
+            id: true,
+            username: true,
+          },
+        },
+        risk_controller: {
+          select: {
+            id: true,
+            username: true,
+          },
+        },
+        repaymentSchedules: {
+          select: {
+            due_start_date: true,
+            capital: true,
+            interest: true,
+          },
+          orderBy: {
+            due_start_date: 'asc',
+          },
+        },
+      },
+      orderBy: [{ created_at: 'asc' }],
+    });
+
+    const collectorSummaries = new Map<string, AdminReportSummaryEntry>();
+    const riskSummaries = new Map<string, AdminReportSummaryEntry>();
+    const collectorDetails = new Map<string, AdminReportDetailRow[]>();
+    const riskDetails = new Map<string, AdminReportDetailRow[]>();
+
+    loans.forEach((loan) => {
+      const loanAmount = this.toNumber(loan.loan_amount);
+      const receivingAmount = this.toNumber(loan.receiving_amount);
+      const capital = this.toNumber(loan.capital);
+      const interest = this.toNumber(loan.interest);
+      const toHandRatio = this.toNumber(loan.to_hand_ratio);
+      const handlingFee = this.toNumber(loan.handling_fee);
+      const companyCost = this.toNumber(loan.company_cost);
+      const repaidPeriods = loan.repaid_periods ?? 0;
+      const applyTimes = loan.apply_times ?? 1;
+
+      const receivedPrincipal = capital * repaidPeriods;
+      const receivedInterest = interest * repaidPeriods;
+      const outstandingPrincipal = loanAmount - receivedPrincipal;
+      const commission = loanAmount * toHandRatio;
+      const handlingRate = loanAmount !== 0 ? handlingFee / loanAmount : 0;
+      const totalReceived = receivingAmount;
+      const pendingPrincipal = loanAmount - totalReceived;
+      const profit = totalReceived - loanAmount + commission;
+      const repaymentSchedules = (loan.repaymentSchedules ?? [])
+        .map((schedule) => {
+          if (!schedule.due_start_date) {
+            return null;
+          }
+          return {
+            dueDate: new Date(schedule.due_start_date),
+            principal: this.toNumber(schedule.capital),
+            interest: this.toNumber(schedule.interest),
+          };
+        })
+        .filter(
+          (
+            item,
+          ): item is {
+            dueDate: Date;
+            principal: number;
+            interest: number;
+          } => item !== null,
+        );
+
+      const collectorName = loan.collector?.username || '未分配负责人';
+      const riskControllerName =
+        loan.risk_controller?.username || '未分配风控人';
+
+      const detailRow: AdminReportDetailRow = {
+        userName: loan.user?.username || '',
+        status: loan.status,
+        date: loan.due_start_date ? new Date(loan.due_start_date) : null,
+        applyTimes,
+        loanAmount,
+        totalReceived,
+        receivedPrincipal,
+        receivedInterest,
+        outstandingPrincipal,
+        ratio: toHandRatio,
+        commission,
+        handlingRate,
+        handlingFee,
+        profit,
+        collectorName,
+        riskControllerName,
+        repaymentSchedules,
+      };
+
+      this.pushDetail(collectorDetails, collectorName, detailRow);
+      this.pushDetail(riskDetails, riskControllerName, detailRow);
+
+      this.accumulateSummary(
+        collectorSummaries,
+        collectorName,
+        loanAmount,
+        companyCost,
+        pendingPrincipal,
+        totalReceived,
+        receivedPrincipal,
+        receivedInterest,
+        commission,
+        handlingFee,
+      );
+
+      this.accumulateSummary(
+        riskSummaries,
+        riskControllerName,
+        loanAmount,
+        companyCost,
+        pendingPrincipal,
+        totalReceived,
+        receivedPrincipal,
+        receivedInterest,
+        commission,
+        handlingFee,
+      );
+    });
+
+    const workbookData = {
+      collectorsSummary: Array.from(collectorSummaries.values()).sort((a, b) =>
+        a.name.localeCompare(b.name, 'zh-CN'),
+      ),
+      riskControllersSummary: Array.from(riskSummaries.values()).sort((a, b) =>
+        a.name.localeCompare(b.name, 'zh-CN'),
+      ),
+      collectorDetails: Array.from(collectorDetails.entries())
+        .sort((a, b) => a[0].localeCompare(b[0], 'zh-CN'))
+        .map(([name, rows]) => ({
+          name,
+          rows,
+        })),
+      riskControllerDetails: Array.from(riskDetails.entries())
+        .sort((a, b) => a[0].localeCompare(b[0], 'zh-CN'))
+        .map(([name, rows]) => ({
+          name,
+          rows,
+        })),
+      generatedAt: new Date(),
+    };
+
+    return this.excelExportService.generateAdminReport(workbookData);
+  }
+
+  private pushDetail(
+    map: Map<string, AdminReportDetailRow[]>,
+    key: string,
+    row: AdminReportDetailRow,
+  ) {
+    const list = map.get(key);
+    if (list) {
+      list.push(row);
+    } else {
+      map.set(key, [row]);
+    }
+  }
+
+  private accumulateSummary(
+    map: Map<string, AdminReportSummaryEntry>,
+    key: string,
+    loanAmount: number,
+    companyCost: number,
+    pendingPrincipal: number,
+    totalReceived: number,
+    receivedPrincipal: number,
+    receivedInterest: number,
+    commission: number,
+    withholding: number,
+  ) {
+    const summary =
+      map.get(key) ||
+      ({
+        name: key,
+        loanAmount: 0,
+        companyCost: 0,
+        pendingPrincipal: 0,
+        totalReceived: 0,
+        receivedPrincipal: 0,
+        receivedInterest: 0,
+        commission: 0,
+        withholding: 0,
+      } as AdminReportSummaryEntry);
+
+    summary.loanAmount += loanAmount;
+    summary.companyCost += companyCost;
+    summary.pendingPrincipal += pendingPrincipal;
+    summary.totalReceived += totalReceived;
+    summary.receivedPrincipal += receivedPrincipal;
+    summary.receivedInterest += receivedInterest;
+    summary.commission += commission;
+    summary.withholding += withholding;
+
+    map.set(key, summary);
+  }
+
+  private toNumber(value: any): number {
+    if (value === null || value === undefined) {
+      return 0;
+    }
+    if (typeof value === 'number') {
+      return value;
+    }
+    if (typeof value === 'string') {
+      const n = Number(value);
+      return Number.isNaN(n) ? 0 : n;
+    }
+    if (typeof value === 'object' && 'toNumber' in value) {
+      try {
+        return (value as any).toNumber();
+      } catch {
+        return Number(value) || 0;
+      }
+    }
+    return Number(value) || 0;
   }
 }

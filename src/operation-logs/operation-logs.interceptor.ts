@@ -6,12 +6,14 @@ import {
 } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { tap } from 'rxjs/operators';
+import { Request } from 'express';
 import { OperationLogsService } from './operation-logs.service';
 import { OperationType } from '@prisma/client';
 
 interface AuthenticatedRequest extends Request {
   user: { id: number; role: string };
-  ip?: string;
+  ip: string;
+  oldData?: any; // 用于存储更新前的完整数据（由 Controller 设置）
 }
 
 @Injectable()
@@ -61,12 +63,6 @@ export class OperationLogsInterceptor implements NestInterceptor {
     const ip = request.headers['x-forwarded-for'] || request.ip || '';
     const ipAddress = Array.isArray(ip) ? ip[0] : ip;
 
-    // Store request body as old_data for UPDATE/DELETE operations
-    const oldData =
-      method === 'PUT' || method === 'PATCH' || method === 'DELETE'
-        ? JSON.stringify(request.body)
-        : undefined;
-
     return next.handle().pipe(
       tap(async (response) => {
         try {
@@ -102,6 +98,27 @@ export class OperationLogsInterceptor implements NestInterceptor {
           // Get admin username (need to query from DB)
           const adminUsername = `admin_${user.id}`; // Simplified for now
 
+          // For UPDATE operations, try to get old_data from request.oldData (set by controller)
+          // This must be read AFTER the controller has executed, so we read it here in tap()
+          let oldData: string | undefined;
+          if (method === 'PUT' || method === 'PATCH' || method === 'DELETE') {
+            if (request.oldData) {
+              // Use oldData set by controller (complete data before update)
+              oldData = JSON.stringify(request.oldData);
+            } else {
+              // Fall back to request body (may be incomplete)
+              oldData = JSON.stringify(request.body);
+            }
+          }
+
+          // For UPDATE operations, use response.data as new_data (complete data after update)
+          // For CREATE operations, use response.data as new_data
+          // For DELETE operations, new_data is undefined
+          const newData =
+            method !== 'DELETE' && response && response.data
+              ? JSON.stringify(response.data)
+              : undefined;
+
           // Log the operation
           await this.operationLogsService.logOperation({
             entity_type: entityType,
@@ -110,8 +127,7 @@ export class OperationLogsInterceptor implements NestInterceptor {
             admin_id: user.id,
             admin_username: adminUsername,
             old_data: oldData,
-            new_data:
-              method !== 'DELETE' ? JSON.stringify(response.data) : undefined,
+            new_data: newData,
             ip_address: ipAddress,
           });
         } catch (error) {

@@ -70,20 +70,77 @@ export class RepaymentSchedulesService {
 
   async findByStatusToday(
     status: RepaymentScheduleStatus,
+    adminId?: number,
   ): Promise<RepaymentSchedule[]> {
-    const today = new Date();
+    const now = new Date();
+    const today = new Date(now);
     today.setHours(6, 0, 0, 0);
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
-    return this.prisma.repaymentSchedule.findMany({
-      where: {
-        status,
-        due_start_date: {
-          gte: today,
-          lt: tomorrow,
-        },
-      },
+    // 构建基础查询条件
+    let whereClause: any = {};
+
+    // 如果查询逾期记录，使用和统计逻辑一致的查询方式
+    if (status === 'overdue') {
+      // 逾期：due_end_date < 当前时间 且 未完全支付
+      whereClause.due_end_date = { lt: now };
+
+      // 如果有adminId，需要过滤该collector负责的loan accounts
+      if (adminId) {
+        const collectorLoanRoles = await this.prisma.loanAccountRole.findMany({
+          where: {
+            admin_id: adminId,
+            role_type: 'collector',
+          },
+          select: {
+            loan_account_id: true,
+          },
+        });
+        const loanAccountIds = collectorLoanRoles.map(
+          (role) => role.loan_account_id,
+        );
+        if (loanAccountIds.length > 0) {
+          whereClause.loan_id = { in: loanAccountIds };
+        } else {
+          // 如果没有关联的loan accounts，返回空数组
+          return [];
+        }
+      }
+    } else {
+      // 其他状态：使用原来的逻辑（due_start_date在当天）
+      whereClause.status = status;
+      whereClause.due_start_date = {
+        gte: today,
+        lt: tomorrow,
+      };
+
+      // 如果有adminId，需要过滤该collector负责的loan accounts
+      if (adminId) {
+        const collectorLoanRoles = await this.prisma.loanAccountRole.findMany({
+          where: {
+            admin_id: adminId,
+            role_type: 'collector',
+          },
+          select: {
+            loan_account_id: true,
+          },
+        });
+        const loanAccountIds = collectorLoanRoles.map(
+          (role) => role.loan_account_id,
+        );
+        if (loanAccountIds.length > 0) {
+          whereClause.loan_id = { in: loanAccountIds };
+        } else {
+          // 如果没有关联的loan accounts，返回空数组
+          return [];
+        }
+      }
+    }
+
+    // 查询所有符合条件的记录
+    const schedules = await this.prisma.repaymentSchedule.findMany({
+      where: whereClause,
       include: {
         loan_account: {
           include: {
@@ -119,6 +176,17 @@ export class RepaymentSchedulesService {
         due_start_date: 'asc',
       },
     });
+
+    // 如果是逾期记录，需要在内存中过滤出未完全支付的记录
+    if (status === 'overdue') {
+      return schedules.filter((schedule) => {
+        const dueAmount = Number(schedule.due_amount || 0);
+        const paidAmount = Number(schedule.paid_amount || 0);
+        return paidAmount < dueAmount;
+      });
+    }
+
+    return schedules;
   }
 
   toResponse(schedule: any): RepaymentScheduleResponseDto {

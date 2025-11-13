@@ -13,7 +13,6 @@ export class ScheduleStatusService {
   @Cron('5 6 * * *')
   async updateRepaymentScheduleStatuses() {
     const now = new Date();
-
     // 激活：已到达开始时间且未到结束时间
     await this.prisma.repaymentSchedule.updateMany({
       where: {

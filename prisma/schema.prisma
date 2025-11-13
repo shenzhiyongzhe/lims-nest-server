@@ -84,6 +84,7 @@ model LoanAccount {
   interest          Decimal   @db.Decimal(10, 2)
   due_start_date    DateTime
   due_end_date      DateTime
+  apply_times       Int       @default(1)
   status            LoanAccountStatus  @default(pending)
   handling_fee      Decimal   @db.Decimal(10, 2)
   total_periods     Int

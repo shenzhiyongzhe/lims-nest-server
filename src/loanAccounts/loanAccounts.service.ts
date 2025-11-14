@@ -512,6 +512,8 @@ export class LoanAccountsService {
         profit,
         collectorName,
         riskControllerName,
+        paidPeriods: repaidPeriods,
+        totalPeriods: loan.total_periods ?? repaymentSchedules.length,
         repaymentSchedules,
       };
 

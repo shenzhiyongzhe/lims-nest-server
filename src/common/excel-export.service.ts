@@ -30,6 +30,8 @@ export interface AdminReportDetailRow {
   profit: number;
   collectorName: string;
   riskControllerName: string;
+  paidPeriods?: number;
+  totalPeriods?: number;
   repaymentSchedules: Array<{
     dueDate: Date;
     principal: number;
@@ -245,6 +247,7 @@ export class ExcelExportService {
       '后扣',
       '后扣费用',
       '盈亏',
+      '期数',
       '风控人',
       '负责人',
     ];
@@ -314,8 +317,13 @@ export class ExcelExportService {
         width: 14,
         style: { numFmt: '#,##0.00' },
       },
-      { header: baseHeaders[15], key: 'riskControllerName', width: 16 },
-      { header: baseHeaders[16], key: 'collectorName', width: 16 },
+      {
+        header: baseHeaders[15],
+        key: 'periods',
+        width: 12,
+      },
+      { header: baseHeaders[16], key: 'riskControllerName', width: 16 },
+      { header: baseHeaders[17], key: 'collectorName', width: 16 },
     ];
     const baseColumnCount = baseColumnConfigs.length;
 
@@ -341,27 +349,58 @@ export class ExcelExportService {
       const headerRowTop = sheet.getRow(1);
       const headerRowBottom = sheet.getRow(2);
 
+      // 科技蓝背景色
+      const techBlueFill: ExcelJS.Fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FF0070C0' },
+      };
+
       for (let i = 0; i < baseColumnCount; i += 1) {
         const columnIndex = i + 1;
-        headerRowTop.getCell(columnIndex).value = baseHeaders[i];
-        headerRowTop.getCell(columnIndex).font = { bold: true };
-        headerRowTop.getCell(columnIndex).alignment = {
-          vertical: 'middle',
-          horizontal: 'center',
-        };
-        sheet.mergeCells(1, columnIndex, 2, columnIndex);
+        const isPeriodsColumn = i === 15; // 期数列索引
+
+        if (isPeriodsColumn) {
+          // 期数列需要分两行显示
+          const topCell = headerRowTop.getCell(columnIndex);
+          topCell.value = '已还期数';
+          topCell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+          topCell.alignment = { horizontal: 'center' };
+          topCell.fill = techBlueFill;
+
+          const bottomCell = headerRowBottom.getCell(columnIndex);
+          bottomCell.value = '总期数';
+          bottomCell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+          bottomCell.alignment = { horizontal: 'center' };
+          bottomCell.fill = techBlueFill;
+        } else {
+          const cell = headerRowTop.getCell(columnIndex);
+          cell.value = baseHeaders[i];
+          cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+          cell.alignment = {
+            vertical: 'middle',
+            horizontal: 'center',
+          };
+          cell.fill = techBlueFill;
+          sheet.mergeCells(1, columnIndex, 2, columnIndex);
+        }
       }
 
       dateInfos.forEach((info, idx) => {
         const columnIndex = baseColumnCount + idx + 1;
-        headerRowTop.getCell(columnIndex).value = info.displayLabel;
-        headerRowTop.getCell(columnIndex).font = { bold: true };
-        headerRowTop.getCell(columnIndex).alignment = { horizontal: 'center' };
-        headerRowBottom.getCell(columnIndex).value = '本金/利息';
-        headerRowBottom.getCell(columnIndex).font = { bold: true };
-        headerRowBottom.getCell(columnIndex).alignment = {
+        const topCell = headerRowTop.getCell(columnIndex);
+        topCell.value = info.displayLabel;
+        topCell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        topCell.alignment = { horizontal: 'center' };
+        topCell.fill = techBlueFill;
+
+        const bottomCell = headerRowBottom.getCell(columnIndex);
+        bottomCell.value = '本金/利息';
+        bottomCell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        bottomCell.alignment = {
           horizontal: 'center',
         };
+        bottomCell.fill = techBlueFill;
       });
 
       const totals = {
@@ -413,24 +452,38 @@ export class ExcelExportService {
           row.handlingRate,
           row.handlingFee,
           row.profit,
+          '', // 期数列将在后面单独处理
           row.riskControllerName,
           row.collectorName,
         ];
 
         for (let i = 0; i < baseColumnCount; i += 1) {
           const columnIndex = i + 1;
-          sheet.mergeCells(
-            currentRow,
-            columnIndex,
-            currentRow + 1,
-            columnIndex,
-          );
-          const cell = sheet.getCell(currentRow, columnIndex);
-          cell.value = baseValues[i];
-          cell.alignment = {
-            vertical: 'middle',
-            horizontal: i === 0 ? 'center' : undefined,
-          };
+          const isPeriodsColumn = i === 15; // 期数列索引
+
+          if (isPeriodsColumn) {
+            // 期数列分两行显示：上方已还期数，下方总期数
+            const topCell = sheet.getCell(currentRow, columnIndex);
+            const bottomCell = sheet.getCell(currentRow + 1, columnIndex);
+            topCell.value = row.paidPeriods ?? 0;
+            bottomCell.value =
+              row.totalPeriods ?? row.repaymentSchedules.length;
+            topCell.alignment = { horizontal: 'center', vertical: 'middle' };
+            bottomCell.alignment = { horizontal: 'center', vertical: 'middle' };
+          } else {
+            sheet.mergeCells(
+              currentRow,
+              columnIndex,
+              currentRow + 1,
+              columnIndex,
+            );
+            const cell = sheet.getCell(currentRow, columnIndex);
+            cell.value = baseValues[i];
+            cell.alignment = {
+              vertical: 'middle',
+              horizontal: i === 0 ? 'center' : undefined,
+            };
+          }
         }
 
         dateInfos.forEach((info, idx) => {
@@ -486,25 +539,40 @@ export class ExcelExportService {
         '',
         totals.handlingFee,
         totals.profit,
+        '', // 期数列将在后面单独处理
         '',
         '',
       ];
 
       for (let i = 0; i < baseColumnCount; i += 1) {
         const columnIndex = i + 1;
-        sheet.mergeCells(
-          summaryRowTopIndex,
-          columnIndex,
-          summaryRowBottomIndex,
-          columnIndex,
-        );
-        const cell = sheet.getCell(summaryRowTopIndex, columnIndex);
-        cell.value = summaryValues[i];
-        cell.font = { bold: true };
-        cell.alignment = {
-          vertical: 'middle',
-          horizontal: i === 0 ? 'center' : undefined,
-        };
+        const isPeriodsColumn = i === 15; // 期数列索引
+
+        if (isPeriodsColumn) {
+          // 期数列合计行也分两行显示
+          const topCell = sheet.getCell(summaryRowTopIndex, columnIndex);
+          const bottomCell = sheet.getCell(summaryRowBottomIndex, columnIndex);
+          topCell.value = ''; // 已还期数合计通常不需要显示
+          bottomCell.value = ''; // 总期数合计通常不需要显示
+          topCell.font = { bold: true };
+          bottomCell.font = { bold: true };
+          topCell.alignment = { horizontal: 'center', vertical: 'middle' };
+          bottomCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        } else {
+          sheet.mergeCells(
+            summaryRowTopIndex,
+            columnIndex,
+            summaryRowBottomIndex,
+            columnIndex,
+          );
+          const cell = sheet.getCell(summaryRowTopIndex, columnIndex);
+          cell.value = summaryValues[i];
+          cell.font = { bold: true };
+          cell.alignment = {
+            vertical: 'middle',
+            horizontal: i === 0 ? 'center' : undefined,
+          };
+        }
       }
 
       dateInfos.forEach((info, idx) => {

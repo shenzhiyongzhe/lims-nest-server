@@ -102,6 +102,7 @@ export class LoanAccountsController {
   }
 
   @UseGuards(AuthGuard, RolesGuard)
+  @Roles(ManagementRoles.管理员, ManagementRoles.风控人)
   @Post()
   async create(
     @Body() body: CreateLoanAccountDto,

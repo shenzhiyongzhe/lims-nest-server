@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
@@ -140,6 +141,27 @@ export class LoanAccountsController {
     } catch (error: any) {
       console.error('更新贷款记录错误:', error);
       return ResponseHelper.error(`更新贷款记录失败: ${error.message}`, 500);
+    }
+  }
+
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(ManagementRoles.管理员)
+  @Delete(':id')
+  async delete(
+    @Param('id') id: string,
+    @Query('force') force?: string,
+  ): Promise<ApiResponseDto> {
+    try {
+      const isForce = force === 'true';
+      await this.loanAccountsService.delete(id, isForce);
+      return ResponseHelper.success(null, '删除贷款记录成功');
+    } catch (error: any) {
+      console.error('删除贷款记录错误:', error);
+      // 如果是约束错误，返回特殊错误码
+      if (error.message?.includes('CONSTRAINT_ERROR')) {
+        return ResponseHelper.error(error.message, 409); // 409 Conflict
+      }
+      return ResponseHelper.error(`删除贷款记录失败: ${error.message}`, 500);
     }
   }
 }

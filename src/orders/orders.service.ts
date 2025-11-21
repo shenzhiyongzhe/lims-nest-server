@@ -200,13 +200,13 @@ export class OrdersService {
       }
 
       // 3. 更新 LoanAccount
-      // 计算 receiving_amount：所有还款记录的金额总和
-      const repaymentRecords = await tx.repaymentRecord.findMany({
+      // 计算 receiving_amount：所有还款计划的 paid_amount 总和
+      const allSchedules = await tx.repaymentSchedule.findMany({
         where: { loan_id: order.loan_id },
         select: { paid_amount: true },
       });
-      const totalReceiving = repaymentRecords.reduce(
-        (sum, record) => sum + Number(record.paid_amount || 0),
+      const totalReceiving = allSchedules.reduce(
+        (sum, schedule) => sum + Number(schedule.paid_amount || 0),
         0,
       );
 

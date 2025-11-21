@@ -118,49 +118,47 @@ export class StatisticsService {
         for (const [adminId, stats] of adminStatsMap.entries()) {
           const loanIds = Array.from(stats.loan_account_ids);
 
-          // 计算该admin相关的repayment_records金额（累计至当天的实际收款）
-          const repaymentResult = await tx.repaymentRecord.aggregate({
+          // 查询所有相关的repayment_schedules
+          const allSchedules = await tx.repaymentSchedule.findMany({
             where: {
               loan_id: {
                 in: loanIds,
               },
-            },
-            _sum: {
-              paid_amount: true,
-            },
-            _count: {
-              id: true,
-            },
-          });
-
-          const todaySchedules = await tx.repaymentSchedule.findMany({
-            where: {
-              loan_id: {
-                in: loanIds,
-              },
-              // due_start_date: {
-              //   lte: endOfDay,
-              // },
             },
             select: {
               due_amount: true,
               paid_amount: true,
+              status: true,
+              paid_at: true,
             },
           });
 
-          // 计算累计应收金额（未还清的部分）
+          // 计算累计已还金额（从repayment_schedules统计）
+          let payeeAmount = 0;
+          let transactionCount = 0;
           let receivingAmount = 0;
-          for (const schedule of todaySchedules) {
+
+          for (const schedule of allSchedules) {
             const dueAmount = Number(schedule.due_amount || 0);
             const paidAmount = Number(schedule.paid_amount || 0);
+
+            // 累计已还金额
+            if (paidAmount > 0) {
+              payeeAmount += paidAmount;
+            }
+
+            // 统计已还清的记录数（status为paid或paid_amount大于0）
+            if (schedule.status === 'paid' || paidAmount > 0) {
+              transactionCount++;
+            }
+
+            // 计算累计应收金额（未还清的部分）
             const remaining = dueAmount - paidAmount;
             if (remaining > 0) {
               receivingAmount += remaining;
             }
           }
 
-          const payeeAmount = Number(repaymentResult._sum.paid_amount || 0);
-          const transactionCount = repaymentResult._count.id;
           const totalAmount = payeeAmount + receivingAmount;
 
           console.log(`📈 ${stats.admin_name}(${adminId}) 统计结果:`, {
@@ -169,7 +167,7 @@ export class StatisticsService {
             payeeAmount,
             receivingAmount,
             transactionCount,
-            schedulesCountUntilToday: todaySchedules.length,
+            schedulesCount: allSchedules.length,
           });
 
           // 4. 保存或更新统计数据（按admin_id + date唯一）
@@ -816,32 +814,62 @@ export class StatisticsService {
     const startOfYear = new Date(businessDate.getFullYear(), 0, 1);
     startOfYear.setHours(6, 0, 0, 0);
 
-    // 今日收款（业务日期的6点到次日6点）
-    const todayCollection = await this.prisma.repaymentRecord.aggregate({
+    // 今日收款（业务日期的6点到次日6点）- 从repayment_schedules统计
+    const todayPaidSchedules = await this.prisma.repaymentSchedule.findMany({
       where: {
         loan_id: { in: loanAccountIds },
         paid_at: { gte: businessDayStart, lt: businessDayEnd },
       },
-      _sum: { paid_amount: true },
+      select: {
+        paid_amount: true,
+      },
     });
+    const todayCollection = {
+      _sum: {
+        paid_amount: todayPaidSchedules.reduce(
+          (sum, s) => sum + Number(s.paid_amount || 0),
+          0,
+        ),
+      },
+    };
 
-    // 本月收款（从本月1号6点开始到现在）
-    const monthCollection = await this.prisma.repaymentRecord.aggregate({
+    // 本月收款（从本月1号6点开始到现在）- 从repayment_schedules统计
+    const monthSchedules = await this.prisma.repaymentSchedule.findMany({
       where: {
         loan_id: { in: loanAccountIds },
         paid_at: { gte: startOfMonth },
       },
-      _sum: { paid_amount: true },
+      select: {
+        paid_amount: true,
+      },
     });
+    const monthCollection = {
+      _sum: {
+        paid_amount: monthSchedules.reduce(
+          (sum, s) => sum + Number(s.paid_amount || 0),
+          0,
+        ),
+      },
+    };
 
-    // 本年收款（从本年1月1号6点开始到现在）
-    const yearCollection = await this.prisma.repaymentRecord.aggregate({
+    // 本年收款（从本年1月1号6点开始到现在）- 从repayment_schedules统计
+    const yearSchedules = await this.prisma.repaymentSchedule.findMany({
       where: {
         loan_id: { in: loanAccountIds },
         paid_at: { gte: startOfYear },
       },
-      _sum: { paid_amount: true },
+      select: {
+        paid_amount: true,
+      },
     });
+    const yearCollection = {
+      _sum: {
+        paid_amount: yearSchedules.reduce(
+          (sum, s) => sum + Number(s.paid_amount || 0),
+          0,
+        ),
+      },
+    };
 
     // 总手续费
     const totalHandlingFee = loanAccounts.reduce(
@@ -851,7 +879,7 @@ export class StatisticsService {
 
     // 今日事项统计（业务日期的6点到次日6点）
     // 使用 due_start_date 来查询今天应该还款的计划
-    const todaySchedules = await this.prisma.repaymentSchedule.findMany({
+    const todayDueSchedules = await this.prisma.repaymentSchedule.findMany({
       where: {
         loan_id: { in: loanAccountIds },
         due_start_date: {
@@ -859,14 +887,17 @@ export class StatisticsService {
           lt: businessDayEnd,
         },
       },
+      select: {
+        status: true,
+      },
     });
 
     // 今日已付款数量
-    const todayPaidCount = todaySchedules.filter(
+    const todayPaidCount = todayDueSchedules.filter(
       (s) => s.status === 'paid',
     ).length;
     // 今日待处理数量（pending 或 active）
-    const todayPendingCount = todaySchedules.filter(
+    const todayPendingCount = todayDueSchedules.filter(
       (s) => s.status === 'pending' || s.status === 'active',
     ).length;
 

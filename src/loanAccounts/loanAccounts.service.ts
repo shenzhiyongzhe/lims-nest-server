@@ -134,12 +134,16 @@ export class LoanAccountsService {
     return loan;
   }
 
-  findById(id: string): Promise<LoanAccount | null> {
-    return this.prisma.loanAccount.findUnique({
+  async findById(id: string): Promise<any> {
+    const loan = await this.prisma.loanAccount.findUnique({
       where: { id },
       include: {
         user: true,
-        repaymentSchedules: true,
+        repaymentSchedules: {
+          orderBy: {
+            period: 'asc',
+          },
+        },
         risk_controller: {
           select: {
             id: true,
@@ -166,6 +170,62 @@ export class LoanAccountsService {
         },
       },
     });
+
+    if (!loan) {
+      return null;
+    }
+
+    // 计算统计数据
+    const schedules = loan.repaymentSchedules || [];
+
+    // 已还本金：统计所有已还的 repayment schedules 中的 capital
+    // 已还的定义：status 为 'paid' 或者 paid_amount > 0
+    const paidCapital = schedules
+      .filter(
+        (schedule) =>
+          schedule.status === 'paid' ||
+          (schedule.paid_amount && Number(schedule.paid_amount) > 0),
+      )
+      .reduce((sum, schedule) => {
+        return sum + (schedule.capital ? Number(schedule.capital) : 0);
+      }, 0);
+
+    // 已还利息：统计所有已还的 repayment schedules 中的 interest
+    const paidInterest = schedules
+      .filter(
+        (schedule) =>
+          schedule.status === 'paid' ||
+          (schedule.paid_amount && Number(schedule.paid_amount) > 0),
+      )
+      .reduce((sum, schedule) => {
+        return sum + (schedule.interest ? Number(schedule.interest) : 0);
+      }, 0);
+
+    // 罚金：统计所有 repayment schedules 中的 fines
+    const totalFines = schedules.reduce((sum, schedule) => {
+      return sum + (schedule.fines ? Number(schedule.fines) : 0);
+    }, 0);
+
+    // 未还本金：总本金 - 已还本金
+    const totalCapital = Number(loan.capital);
+    const unpaidCapital = totalCapital - paidCapital;
+
+    // 已收金额（receiving_amount）：统计所有 repaymentSchedules 的 paid_amount 总和
+    const receivingAmount = schedules.reduce((sum, schedule) => {
+      return sum + (schedule.paid_amount ? Number(schedule.paid_amount) : 0);
+    }, 0);
+
+    // 将统计数据添加到返回对象
+    return {
+      ...loan,
+      statistics: {
+        receivingAmount, // 已收金额
+        paidCapital, // 已还本金
+        paidInterest, // 已还利息
+        totalFines, // 罚金
+        unpaidCapital, // 未还本金
+      },
+    };
   }
 
   async findGroupedByUser(
@@ -410,6 +470,61 @@ export class LoanAccountsService {
     }
 
     return updated;
+  }
+
+  async delete(id: string, force: boolean = false): Promise<void> {
+    // 检查记录是否存在
+    const loan = await this.prisma.loanAccount.findUnique({
+      where: { id },
+    });
+
+    if (!loan) {
+      throw new Error('贷款记录不存在');
+    }
+
+    if (force) {
+      // 强制删除：先删除关联的 RepaymentRecord，再删除 LoanAccount
+      await this.prisma.$transaction(async (tx) => {
+        // 1. 删除关联的 RepaymentRecord
+        await tx.repaymentRecord.deleteMany({
+          where: { loan_id: id },
+        });
+
+        // 2. 删除关联的 RepaymentSchedule（已有级联删除，但显式删除更安全）
+        await tx.repaymentSchedule.deleteMany({
+          where: { loan_id: id },
+        });
+
+        // 3. 删除关联的 LoanAccountRole（已有级联删除，但显式删除更安全）
+        await tx.loanAccountRole.deleteMany({
+          where: { loan_account_id: id },
+        });
+
+        // 4. 删除 LoanAccount
+        await tx.loanAccount.delete({
+          where: { id },
+        });
+      });
+    } else {
+      // 普通删除：尝试直接删除，如果失败会抛出错误
+      try {
+        await this.prisma.loanAccount.delete({
+          where: { id },
+        });
+      } catch (error: any) {
+        // 检查是否是外键约束错误
+        if (
+          error.code === 'P2003' ||
+          error.message?.includes('Foreign key constraint') ||
+          error.message?.includes('repaymentRecord')
+        ) {
+          throw new Error(
+            'CONSTRAINT_ERROR: 该贷款记录存在关联的还款记录，无法删除。是否强制删除？',
+          );
+        }
+        throw error;
+      }
+    }
   }
 
   async exportAdminReport(): Promise<Buffer> {

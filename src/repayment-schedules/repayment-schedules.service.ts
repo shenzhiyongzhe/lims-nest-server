@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RepaymentSchedule, RepaymentScheduleStatus } from '@prisma/client';
 import { RepaymentScheduleResponseDto } from './dto/repayment-schedule-response.dto';
@@ -56,9 +56,55 @@ export class RepaymentSchedulesService {
   }
 
   async update(data: RepaymentSchedule): Promise<RepaymentSchedule> {
-    return this.prisma.repaymentSchedule.update({
-      where: { id: data.id },
-      data,
+    return await this.prisma.$transaction(async (tx) => {
+      // 1. 获取更新前的还款计划，以获取 loan_id
+      const oldSchedule = await tx.repaymentSchedule.findUnique({
+        where: { id: data.id },
+        select: { loan_id: true },
+      });
+
+      if (!oldSchedule) {
+        throw new NotFoundException('还款计划不存在');
+      }
+
+      // 2. 更新还款计划
+      const updatedSchedule = await tx.repaymentSchedule.update({
+        where: { id: data.id },
+        data,
+      });
+
+      // 3. 同步更新 LoanAccount 的 receiving_amount 和 repaid_periods
+      const loanId = oldSchedule.loan_id;
+
+      // 计算 receiving_amount：所有还款计划的 paid_amount 总和
+      const allSchedules = await tx.repaymentSchedule.findMany({
+        where: { loan_id: loanId },
+        select: { paid_amount: true },
+      });
+      const totalReceiving = allSchedules.reduce(
+        (sum, schedule) => sum + Number(schedule.paid_amount || 0),
+        0,
+      );
+
+      // 计算 repaid_periods：状态为 paid 的计划数量
+      const paidSchedules = await tx.repaymentSchedule.findMany({
+        where: {
+          loan_id: loanId,
+          status: 'paid',
+        },
+      });
+      const repaidPeriods = paidSchedules.length;
+
+      // 更新 LoanAccount
+      await tx.loanAccount.update({
+        where: { id: loanId },
+        data: {
+          receiving_amount: totalReceiving,
+          repaid_periods: repaidPeriods,
+        },
+      });
+
+      return updatedSchedule;
     });
   }
 
@@ -199,6 +245,7 @@ export class RepaymentSchedulesService {
       due_amount: Number(schedule.due_amount),
       capital: schedule.capital ? Number(schedule.capital) : undefined,
       interest: schedule.interest ? Number(schedule.interest) : undefined,
+      fines: schedule.fines ? Number(schedule.fines) : undefined,
       status: schedule.status,
       paid_amount: schedule.paid_amount
         ? Number(schedule.paid_amount)

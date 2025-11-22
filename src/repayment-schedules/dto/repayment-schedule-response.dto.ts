@@ -40,6 +40,8 @@ export class RepaymentScheduleResponseDto {
   due_amount: number;
   capital?: number;
   interest?: number;
+  remaining_capital?: number;
+  remaining_interest?: number;
   fines?: number;
   status: RepaymentScheduleStatus;
   paid_amount?: number;

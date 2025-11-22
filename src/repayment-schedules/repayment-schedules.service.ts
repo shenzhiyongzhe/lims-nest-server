@@ -55,26 +55,106 @@ export class RepaymentSchedulesService {
     });
   }
 
-  async update(data: RepaymentSchedule): Promise<RepaymentSchedule> {
+  async update(
+    data: Partial<RepaymentSchedule> & {
+      pay_capital?: number;
+      pay_interest?: number;
+    },
+  ): Promise<RepaymentSchedule> {
     return await this.prisma.$transaction(async (tx) => {
-      // 1. 获取更新前的还款计划，以获取 loan_id
-      const oldSchedule = await tx.repaymentSchedule.findUnique({
+      // 1. 获取更新前的还款计划数据
+      const currentSchedule = await tx.repaymentSchedule.findUnique({
         where: { id: data.id },
-        select: { loan_id: true },
+        select: {
+          loan_id: true,
+          capital: true,
+          interest: true,
+          remaining_capital: true,
+          remaining_interest: true,
+          fines: true,
+          status: true,
+          due_end_date: true,
+        },
       });
 
-      if (!oldSchedule) {
+      if (!currentSchedule) {
         throw new NotFoundException('还款计划不存在');
       }
 
+      const toNumber = (value?: any) =>
+        value !== null && value !== undefined ? Number(value) : 0;
+
+      const payCapital = Math.max(0, Number(data.pay_capital) || 0);
+      const payInterest = Math.max(0, Number(data.pay_interest) || 0);
+
+      const baseCapital = toNumber(currentSchedule.capital);
+      const baseInterest = toNumber(currentSchedule.interest);
+
+      const prevRemainingCapital =
+        currentSchedule.remaining_capital !== null &&
+        currentSchedule.remaining_capital !== undefined
+          ? Number(currentSchedule.remaining_capital)
+          : baseCapital;
+      const prevRemainingInterest =
+        currentSchedule.remaining_interest !== null &&
+        currentSchedule.remaining_interest !== undefined
+          ? Number(currentSchedule.remaining_interest)
+          : baseInterest;
+
+      const newRemainingCapital = Math.max(
+        0,
+        prevRemainingCapital - payCapital,
+      );
+      const newRemainingInterest = Math.max(
+        0,
+        prevRemainingInterest - payInterest,
+      );
+
+      const { pay_capital, pay_interest, ...restData } = data;
+      const updatePayload: any = {
+        ...restData,
+        remaining_capital: newRemainingCapital,
+        remaining_interest: newRemainingInterest,
+      };
+
+      if (updatePayload.fines !== undefined) {
+        updatePayload.fines = Number(updatePayload.fines);
+      }
+
+      const finesValue =
+        updatePayload.fines !== undefined
+          ? Number(updatePayload.fines)
+          : toNumber(currentSchedule.fines);
+
+      const paidAmount =
+        baseCapital -
+        newRemainingCapital +
+        (baseInterest - newRemainingInterest) +
+        finesValue;
+
+      updatePayload.paid_amount = Number(paidAmount.toFixed(2));
+
+      const hasCapitalProgress =
+        baseCapital > 0 && newRemainingCapital < baseCapital;
+      const hasInterestProgress =
+        baseInterest > 0 && newRemainingInterest < baseInterest;
+
+      let derivedStatus: RepaymentScheduleStatus = currentSchedule.status;
+      if (newRemainingCapital <= 0 && newRemainingInterest <= 0) {
+        derivedStatus = 'paid';
+      } else if (hasCapitalProgress || hasInterestProgress) {
+        derivedStatus = 'active';
+      }
+      updatePayload.status = derivedStatus;
+      updatePayload.paid_at = new Date();
       // 2. 更新还款计划
       const updatedSchedule = await tx.repaymentSchedule.update({
         where: { id: data.id },
-        data,
+        data: updatePayload,
       });
 
       // 3. 同步更新 LoanAccount 的 receiving_amount 和 repaid_periods
-      const loanId = oldSchedule.loan_id;
+      const loanId = currentSchedule.loan_id;
 
       // 计算 receiving_amount：所有还款计划的 paid_amount 总和
       const allSchedules = await tx.repaymentSchedule.findMany({
@@ -245,6 +325,16 @@ export class RepaymentSchedulesService {
       due_amount: Number(schedule.due_amount),
       capital: schedule.capital ? Number(schedule.capital) : undefined,
       interest: schedule.interest ? Number(schedule.interest) : undefined,
+      remaining_capital:
+        schedule.remaining_capital !== null &&
+        schedule.remaining_capital !== undefined
+          ? Number(schedule.remaining_capital)
+          : undefined,
+      remaining_interest:
+        schedule.remaining_interest !== null &&
+        schedule.remaining_interest !== undefined
+          ? Number(schedule.remaining_interest)
+          : undefined,
       fines: schedule.fines ? Number(schedule.fines) : undefined,
       status: schedule.status,
       paid_amount: schedule.paid_amount

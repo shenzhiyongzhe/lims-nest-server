@@ -95,6 +95,8 @@ export class RepaymentSchedulesController {
         due_amount: oldSchedule.due_amount,
         capital: oldSchedule.capital,
         interest: oldSchedule.interest,
+        remaining_capital: oldSchedule.remaining_capital,
+        remaining_interest: oldSchedule.remaining_interest,
         fines: oldSchedule.fines,
         status: oldSchedule.status,
         paid_amount: oldSchedule.paid_amount,
@@ -163,26 +165,20 @@ export class RepaymentSchedulesController {
     }
 
     // 处理数值字段：确保转换为正确的类型
-    if (data.paid_amount !== undefined) {
-      updateData.paid_amount = data.paid_amount;
-    }
-    if (data.capital !== undefined) {
-      updateData.capital = data.capital;
-    }
-    if (data.interest !== undefined) {
-      updateData.interest = data.interest;
-    }
     if (data.fines !== undefined) {
-      updateData.fines = data.fines;
+      updateData.fines = Number(data.fines);
     }
     if (data.due_amount !== undefined) {
       updateData.due_amount = data.due_amount;
     }
+    if (data.pay_capital !== undefined) {
+      updateData.pay_capital = Number(data.pay_capital) || 0;
+    }
+    if (data.pay_interest !== undefined) {
+      updateData.pay_interest = Number(data.pay_interest) || 0;
+    }
 
     // 处理其他字段
-    if (data.status !== undefined) {
-      updateData.status = data.status;
-    }
     if (data.period !== undefined) {
       updateData.period = data.period;
     }
@@ -205,6 +201,8 @@ export class RepaymentSchedulesController {
       due_amount: updatedSchedule.due_amount,
       capital: updatedSchedule.capital,
       interest: updatedSchedule.interest,
+      remaining_capital: updatedSchedule.remaining_capital,
+      remaining_interest: updatedSchedule.remaining_interest,
       fines: updatedSchedule.fines,
       status: updatedSchedule.status,
       paid_amount: updatedSchedule.paid_amount,

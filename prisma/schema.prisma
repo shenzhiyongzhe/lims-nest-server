@@ -134,6 +134,8 @@ model RepaymentSchedule {
   due_amount     Decimal          @db.Decimal(10, 2)
   capital        Decimal?         @db.Decimal(10, 2)
   interest       Decimal?         @db.Decimal(10, 2)
+  remaining_capital  Decimal?     @db.Decimal(10, 2)
+  remaining_interest Decimal?     @db.Decimal(10, 2)
   fines          Decimal?         @db.Decimal(10, 2) @default(0)
   status         RepaymentScheduleStatus  @default(pending)
   paid_amount    Decimal?         @db.Decimal(10, 2)

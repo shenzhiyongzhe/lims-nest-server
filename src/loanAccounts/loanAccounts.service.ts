@@ -94,6 +94,8 @@ export class LoanAccountsService {
           due_amount: perAmount,
           capital: capital ? Number(capital) : null,
           interest: interest ? Number(interest) : null,
+          remaining_capital: capital ? Number(capital) : null,
+          remaining_interest: interest ? Number(interest) : null,
           status: data.status as RepaymentScheduleStatus,
         };
       });
@@ -178,42 +180,50 @@ export class LoanAccountsService {
     // 计算统计数据
     const schedules = loan.repaymentSchedules || [];
 
-    // 已还本金：统计所有已还的 repayment schedules 中的 capital
-    // 已还的定义：status 为 'paid' 或者 paid_amount > 0
-    const paidCapital = schedules
-      .filter(
-        (schedule) =>
-          schedule.status === 'paid' ||
-          (schedule.paid_amount && Number(schedule.paid_amount) > 0),
-      )
-      .reduce((sum, schedule) => {
-        return sum + (schedule.capital ? Number(schedule.capital) : 0);
-      }, 0);
+    const sumNumber = (value?: any) =>
+      value !== null && value !== undefined ? Number(value) : 0;
 
-    // 已还利息：统计所有已还的 repayment schedules 中的 interest
-    const paidInterest = schedules
-      .filter(
-        (schedule) =>
-          schedule.status === 'paid' ||
-          (schedule.paid_amount && Number(schedule.paid_amount) > 0),
-      )
-      .reduce((sum, schedule) => {
-        return sum + (schedule.interest ? Number(schedule.interest) : 0);
-      }, 0);
+    const totalCapital = schedules.reduce(
+      (sum, schedule) => sum + sumNumber(schedule.capital),
+      0,
+    );
+    const totalInterest = schedules.reduce(
+      (sum, schedule) => sum + sumNumber(schedule.interest),
+      0,
+    );
 
-    // 罚金：统计所有 repayment schedules 中的 fines
-    const totalFines = schedules.reduce((sum, schedule) => {
-      return sum + (schedule.fines ? Number(schedule.fines) : 0);
+    const remainingCapital = schedules.reduce((sum, schedule) => {
+      const remaining =
+        schedule.remaining_capital !== null &&
+        schedule.remaining_capital !== undefined
+          ? Number(schedule.remaining_capital)
+          : sumNumber(schedule.capital);
+      return sum + remaining;
     }, 0);
 
-    // 未还本金：总本金 - 已还本金
-    const totalCapital = Number(loan.capital);
-    const unpaidCapital = totalCapital - paidCapital;
-
-    // 已收金额（receiving_amount）：统计所有 repaymentSchedules 的 paid_amount 总和
-    const receivingAmount = schedules.reduce((sum, schedule) => {
-      return sum + (schedule.paid_amount ? Number(schedule.paid_amount) : 0);
+    const remainingInterest = schedules.reduce((sum, schedule) => {
+      const remaining =
+        schedule.remaining_interest !== null &&
+        schedule.remaining_interest !== undefined
+          ? Number(schedule.remaining_interest)
+          : sumNumber(schedule.interest);
+      return sum + remaining;
     }, 0);
+
+    const paidCapital = Math.max(totalCapital - remainingCapital, 0);
+    const paidInterest = Math.max(totalInterest - remainingInterest, 0);
+
+    const totalFines = schedules.reduce(
+      (sum, schedule) => sum + sumNumber(schedule.fines),
+      0,
+    );
+
+    const unpaidCapital = remainingCapital;
+
+    const receivingAmount = schedules.reduce(
+      (sum, schedule) => sum + sumNumber(schedule.paid_amount),
+      0,
+    );
 
     // 将统计数据添加到返回对象
     return {
@@ -224,6 +234,8 @@ export class LoanAccountsService {
         paidInterest, // 已还利息
         totalFines, // 罚金
         unpaidCapital, // 未还本金
+        remainingCapital, // 还需还款本金
+        remainingInterest, // 还需还款利息
       },
     };
   }

@@ -59,6 +59,7 @@ export class RepaymentSchedulesService {
     data: Partial<RepaymentSchedule> & {
       pay_capital?: number;
       pay_interest?: number;
+      fines?: number;
     },
   ): Promise<RepaymentSchedule> {
     return await this.prisma.$transaction(async (tx) => {
@@ -142,7 +143,11 @@ export class RepaymentSchedulesService {
       let derivedStatus: RepaymentScheduleStatus = currentSchedule.status;
       if (newRemainingCapital <= 0 && newRemainingInterest <= 0) {
         derivedStatus = 'paid';
-      } else if (hasCapitalProgress || hasInterestProgress) {
+      } else if (
+        hasCapitalProgress ||
+        hasInterestProgress ||
+        (data.fines !== undefined && data.fines > 0)
+      ) {
         derivedStatus = 'active';
       }
       updatePayload.status = derivedStatus;

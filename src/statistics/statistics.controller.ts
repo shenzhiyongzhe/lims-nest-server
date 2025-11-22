@@ -82,8 +82,17 @@ export class StatisticsController {
 
   @Get('collector-report')
   async getCollectorReport(@CurrentUser() user: { id: number; role: string }) {
-    const report = await this.statisticsService.getCollectorReport(user.id);
-    return ResponseHelper.success(report, '收款人报表获取成功');
+    // 根据用户角色确定查询类型
+    const roleType = user.role === '风控人' ? 'risk_controller' : 'collector';
+    const report = await this.statisticsService.getCollectorReport(
+      user.id,
+      roleType,
+    );
+    const message =
+      roleType === 'risk_controller'
+        ? '风控人报表获取成功'
+        : '收款人报表获取成功';
+    return ResponseHelper.success(report, message);
   }
 
   @Post('calculate')

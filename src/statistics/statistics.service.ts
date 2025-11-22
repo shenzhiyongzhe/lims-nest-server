@@ -394,7 +394,6 @@ export class StatisticsService {
     console.log(`🔍 查询统计数据:`);
     console.log(`  - businessDate: ${businessDate.toISOString()}`);
     console.log(`  - dateStr: ${dateStr}`);
-    console.log(`♻️ 重新计算当天统计数据`);
     await this.calculateDailyStatistics(new Date(businessDate));
 
     // 直接使用原始 SQL 查询，使用 DATE() 函数比较，避免时区问题
@@ -690,14 +689,19 @@ export class StatisticsService {
     return result && result.length > 0 && Number(result[0].count) > 0;
   }
 
-  async getCollectorReport(adminId: number) {
-    console.log(`📊 获取收款人报表: adminId=${adminId}`);
+  async getCollectorReport(
+    adminId: number,
+    roleType: 'collector' | 'risk_controller' = 'collector',
+  ) {
+    console.log(
+      `📊 获取${roleType === 'collector' ? '收款人' : '风控人'}报表: adminId=${adminId}, roleType=${roleType}`,
+    );
 
-    // 1. 获取当前collector关联的loanAccount IDs
+    // 1. 获取当前角色关联的loanAccount IDs
     const collectorLoanRoles = await this.prisma.loanAccountRole.findMany({
       where: {
         admin_id: adminId,
-        role_type: 'collector',
+        role_type: roleType,
       },
       select: {
         loan_account_id: true,
@@ -738,28 +742,41 @@ export class StatisticsService {
             username: true,
           },
         },
+        collector: {
+          select: {
+            id: true,
+            username: true,
+          },
+        },
       },
       orderBy: {
         risk_controller_id: 'asc',
       },
     });
 
-    // 3. 按risk_controller分组
-    const groupedByRiskController = new Map<number, any[]>();
+    // 3. 根据角色类型决定分组方式：collector按risk_controller分组，risk_controller按collector分组
+    const groupedByRole = new Map<number, any[]>();
     const groupTotals = new Map<number, number>();
-    const riskControllerNames = new Map<number, string>();
+    const roleNames = new Map<number, string>();
 
     loanAccounts.forEach((account) => {
-      const riskControllerId = account.risk_controller_id;
-      const riskControllerName = account.risk_controller.username;
+      // 如果是collector角色，按risk_controller分组；如果是risk_controller角色，按collector分组
+      const groupId =
+        roleType === 'collector'
+          ? account.risk_controller_id
+          : account.collector_id;
+      const groupName =
+        roleType === 'collector'
+          ? account.risk_controller?.username || ''
+          : account.collector?.username || '';
 
-      if (!groupedByRiskController.has(riskControllerId)) {
-        groupedByRiskController.set(riskControllerId, []);
-        groupTotals.set(riskControllerId, 0);
-        riskControllerNames.set(riskControllerId, riskControllerName);
+      if (!groupedByRole.has(groupId)) {
+        groupedByRole.set(groupId, []);
+        groupTotals.set(groupId, 0);
+        roleNames.set(groupId, groupName);
       }
 
-      groupedByRiskController.get(riskControllerId)!.push({
+      groupedByRole.get(groupId)!.push({
         id: account.id,
         user_id: account.user_id,
         user_name: account.user.username,
@@ -777,19 +794,21 @@ export class StatisticsService {
         created_at: account.created_at,
       });
 
-      const currentTotal = groupTotals.get(riskControllerId)!;
+      const currentTotal = groupTotals.get(groupId)!;
       groupTotals.set(
-        riskControllerId,
+        groupId,
         currentTotal + Number(account.receiving_amount || 0),
       );
     });
 
     // 4. 格式化分组数据
-    const groupedData = Array.from(groupedByRiskController.entries()).map(
-      ([riskControllerId, accounts]) => ({
-        risk_controller_id: riskControllerId,
-        risk_controller: riskControllerNames.get(riskControllerId) || '',
-        total_receiving_amount: groupTotals.get(riskControllerId) || 0,
+    const groupedData = Array.from(groupedByRole.entries()).map(
+      ([groupId, accounts]) => ({
+        [roleType === 'collector' ? 'risk_controller_id' : 'collector_id']:
+          groupId,
+        [roleType === 'collector' ? 'risk_controller' : 'collector']:
+          roleNames.get(groupId) || '',
+        total_receiving_amount: groupTotals.get(groupId) || 0,
         loan_count: accounts.length,
         accounts: accounts,
       }),

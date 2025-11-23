@@ -46,7 +46,18 @@ export class StatisticsService {
     return businessDayEnd;
   }
 
-  async calculateDailyStatistics(date: Date): Promise<void> {
+  async calculateDailyStatistics(date: Date): Promise<
+    Array<{
+      admin_id: number;
+      admin_name: string;
+      role: string;
+      date: string;
+      total_amount: number;
+      payee_amount: number;
+      receiving_amount: number;
+      transaction_count: number;
+    }>
+  > {
     // 获取日期字符串（YYYY-MM-DD），避免时区问题
     const dateStr = date.toISOString().split('T')[0];
 
@@ -73,6 +84,7 @@ export class StatisticsService {
           select: {
             id: true,
             username: true,
+            role: true,
           },
         },
         loan_account: {
@@ -84,12 +96,25 @@ export class StatisticsService {
       },
     });
 
+    // 如果没有 roles，说明没有 loanAccounts，删除当天的统计数据并返回空数组
+    if (roles.length === 0) {
+      console.log(`⚠️ 没有找到任何 loan_account_roles，清理当天的统计数据`);
+      // 删除当天的统计数据
+      await this.prisma.$executeRaw`
+        DELETE FROM daily_statistics
+        WHERE DATE(date) = ${dateStr}
+      `;
+      console.log(`✅ 已清理 ${dateStr} 的统计数据`);
+      return [];
+    }
+
     // 2. 按admin_id分组，合并同一人在不同角色下的数据
     const adminStatsMap = new Map<
       number,
       {
         admin_id: number;
         admin_name: string;
+        admin_role: string;
         loan_account_ids: Set<string>;
       }
     >();
@@ -97,12 +122,14 @@ export class StatisticsService {
     for (const role of roles) {
       const adminId = role.admin_id;
       const adminName = role.admin.username;
+      const adminRole = role.admin.role;
       const loanAccountId = role.loan_account_id;
 
       if (!adminStatsMap.has(adminId)) {
         adminStatsMap.set(adminId, {
           admin_id: adminId,
           admin_name: adminName,
+          admin_role: adminRole,
           loan_account_ids: new Set(),
         });
       }
@@ -111,7 +138,18 @@ export class StatisticsService {
       stats.loan_account_ids.add(loanAccountId);
     }
 
-    // 3. 为每个admin统计相关的数据
+    // 3. 为每个admin统计相关的数据，并收集结果
+    const results: Array<{
+      admin_id: number;
+      admin_name: string;
+      role: string;
+      date: string;
+      total_amount: number;
+      payee_amount: number;
+      receiving_amount: number;
+      transaction_count: number;
+    }> = [];
+
     // 使用事务来确保所有操作的原子性
     await this.prisma.$transaction(
       async (tx) => {
@@ -168,6 +206,18 @@ export class StatisticsService {
             receivingAmount,
             transactionCount,
             schedulesCount: allSchedules.length,
+          });
+
+          // 收集结果
+          results.push({
+            admin_id: adminId,
+            admin_name: stats.admin_name,
+            role: stats.admin_role,
+            date: dateStr,
+            total_amount: totalAmount,
+            payee_amount: payeeAmount,
+            receiving_amount: receivingAmount,
+            transaction_count: transactionCount,
           });
 
           // 4. 保存或更新统计数据（按admin_id + date唯一）
@@ -258,7 +308,8 @@ export class StatisticsService {
       },
     );
 
-    console.log(`✅ ${dateStr} 统计数据已保存`);
+    console.log(`✅ ${dateStr} 统计数据已保存，返回 ${results.length} 条记录`);
+    return results;
   }
 
   async getStatistics(startDate: Date, endDate: Date) {
@@ -394,137 +445,28 @@ export class StatisticsService {
     console.log(`🔍 查询统计数据:`);
     console.log(`  - businessDate: ${businessDate.toISOString()}`);
     console.log(`  - dateStr: ${dateStr}`);
-    await this.calculateDailyStatistics(new Date(businessDate));
 
-    // 直接使用原始 SQL 查询，使用 DATE() 函数比较，避免时区问题
-    console.log(`  - 使用原始 SQL 查询日期: ${dateStr}`);
+    // 直接调用 calculateDailyStatistics 获取计算结果，不再重新查询
+    const calculatedStats = await this.calculateDailyStatistics(
+      new Date(businessDate),
+    );
 
-    // 使用 Prisma 的原始 SQL 查询，使用参数化查询防止 SQL 注入
-    const rawStats = await this.prisma.$queryRaw<
-      Array<{
-        id: number;
-        admin_id: number;
-        admin_name: string;
-        date: Date;
-        total_amount: any;
-        payee_amount: any;
-        receiving_amount: any;
-        transaction_count: number;
-        admin_id_included: number;
-        username: string;
-        role: string;
-      }>
-    >`
-      SELECT 
-        ds.id,
-        ds.admin_id,
-        ds.admin_name,
-        ds.date,
-        ds.total_amount,
-        ds.payee_amount,
-        ds.receiving_amount,
-        ds.transaction_count,
-        a.id as admin_id_included,
-        a.username,
-        a.role
-      FROM daily_statistics ds
-      INNER JOIN admins a ON ds.admin_id = a.id
-      WHERE DATE(ds.date) = ${dateStr}
-      ORDER BY ds.receiving_amount DESC
-    `;
+    console.log(
+      `✅ 统计数据计算完成: calculatedStats.length=${calculatedStats.length}`,
+    );
 
-    console.log(`✅ 原始 SQL 查询结果: rawStats.length=${rawStats.length}`);
-
-    // 如果查询结果为空，尝试同步创建默认统计记录
-    if (rawStats.length === 0) {
-      console.log(`⚠️ 重新计算后仍未找到统计数据，尝试创建默认统计记录...`);
-      try {
-        const retryStats = await this.prisma.$queryRaw<
-          Array<{
-            id: number;
-            admin_id: number;
-            admin_name: string;
-            date: Date;
-            total_amount: any;
-            payee_amount: any;
-            receiving_amount: any;
-            transaction_count: number;
-            admin_id_included: number;
-            username: string;
-            role: string;
-          }>
-        >`
-          SELECT 
-            ds.id,
-            ds.admin_id,
-            ds.admin_name,
-            ds.date,
-            ds.total_amount,
-            ds.payee_amount,
-            ds.receiving_amount,
-            ds.transaction_count,
-            a.id as admin_id_included,
-            a.username,
-            a.role
-          FROM daily_statistics ds
-          INNER JOIN admins a ON ds.admin_id = a.id
-          WHERE DATE(ds.date) = ${dateStr}
-          ORDER BY ds.receiving_amount DESC
-        `;
-
-        console.log(`✅ 重新查询结果: retryStats.length=${retryStats.length}`);
-
-        // 如果仍然为空，为所有有 loan_account 关联的管理员创建默认值
-        if (retryStats.length === 0) {
-          console.log(`⚠️ 统计计算后仍然为空，创建默认统计记录...`);
-          await this.createDefaultStatistics(businessDate, dateStr);
-
-          // 再次查询
-          const finalStats = await this.prisma.$queryRaw<
-            Array<{
-              id: number;
-              admin_id: number;
-              admin_name: string;
-              date: Date;
-              total_amount: any;
-              payee_amount: any;
-              receiving_amount: any;
-              transaction_count: number;
-              admin_id_included: number;
-              username: string;
-              role: string;
-            }>
-          >`
-            SELECT 
-              ds.id,
-              ds.admin_id,
-              ds.admin_name,
-              ds.date,
-              ds.total_amount,
-              ds.payee_amount,
-              ds.receiving_amount,
-              ds.transaction_count,
-              a.id as admin_id_included,
-              a.username,
-              a.role
-            FROM daily_statistics ds
-            INNER JOIN admins a ON ds.admin_id = a.id
-            WHERE DATE(ds.date) = ${dateStr}
-            ORDER BY ds.receiving_amount DESC
-          `;
-
-          return this.formatStatistics(finalStats, dateStr);
-        }
-
-        return this.formatStatistics(retryStats, dateStr);
-      } catch (error) {
-        console.error(`❌ 创建统计记录失败:`, error);
-        // 如果创建失败，返回空数组
-        return [];
-      }
+    // 如果计算结果为空，直接返回空数组（说明没有 loanAccounts）
+    if (calculatedStats.length === 0) {
+      console.log(`⚠️ 没有统计数据，返回空数组`);
+      return [];
     }
 
-    return this.formatStatistics(rawStats, dateStr);
+    // 按 receiving_amount 降序排序
+    const sortedStats = calculatedStats.sort(
+      (a, b) => b.receiving_amount - a.receiving_amount,
+    );
+
+    return sortedStats;
   }
 
   // 格式化统计数据

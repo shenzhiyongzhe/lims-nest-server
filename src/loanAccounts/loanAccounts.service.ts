@@ -4,6 +4,8 @@ import {
   LoanAccount,
   LoanAccountStatus,
   RepaymentScheduleStatus,
+  OrderStatus,
+  PaymentMethod,
   User,
 } from '@prisma/client';
 import { CreateLoanAccountDto } from './dto/create-loanAccount.dto';
@@ -357,6 +359,8 @@ export class LoanAccountsService {
       updateData.status = data.status as LoanAccountStatus;
     if (data.company_cost !== undefined)
       updateData.company_cost = data.company_cost;
+    if (data.apply_times !== undefined)
+      updateData.apply_times = data.apply_times;
 
     // 处理管理员ID字段
     if (data.risk_controller_id !== undefined) {
@@ -508,6 +512,12 @@ export class LoanAccountsService {
           where: { loan_id: id },
         });
 
+        // 结清前累计的已收金额
+        const prevTotalReceiving = schedules.reduce(
+          (sum, s) => sum + this.toNumber(s.paid_amount),
+          0,
+        );
+
         // 仅更新状态为 pending 或 active 的还款计划为已支付状态
         const targetSchedules = schedules.filter(
           (s) => s.status === 'pending' || s.status === 'active',
@@ -535,6 +545,57 @@ export class LoanAccountsService {
           // 已支付的则使用已支付金额
           return sum + this.toNumber(s.paid_amount);
         }, 0);
+
+        // 结清应追加的还款金额
+        const settlementAmount = Math.max(
+          0,
+          receivingAmount - prevTotalReceiving,
+        );
+
+        // 若有剩余应收款，写入一条还款记录 + 完成订单
+        if (settlementAmount > 0) {
+          // 获取用户与收款人
+          const la = await tx.loanAccount.findUnique({
+            where: { id },
+            select: { user_id: true, payee_id: true },
+          });
+          let payee = null as null | { id: number };
+          if (la?.payee_id) {
+            payee = await tx.payee.findFirst({
+              where: { admin_id: la.payee_id },
+              select: { id: true },
+            });
+          }
+
+          // 创建已完成订单
+          const order = await tx.order.create({
+            data: {
+              customer_id: la!.user_id,
+              loan_id: id,
+              amount: settlementAmount,
+              payment_periods: 1,
+              payment_method: PaymentMethod.wechat_pay,
+              remark: '来源：提前结清',
+              status: OrderStatus.completed,
+              payee_id: payee?.id,
+              expires_at: new Date(),
+            },
+          });
+
+          // 创建还款记录
+          await tx.repaymentRecord.create({
+            data: {
+              loan_id: id,
+              user_id: la!.user_id,
+              paid_amount: settlementAmount,
+              paid_at: new Date(),
+              payment_method: 'wechat_pay' as any,
+              payee_id: payee?.id ?? 0,
+              remark: '来源：提前结清',
+              order_id: order.id,
+            },
+          });
+        }
 
         // 更新贷款账户
         const totalPeriods = loan.total_periods || schedules.length;

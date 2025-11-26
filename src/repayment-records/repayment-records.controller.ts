@@ -24,7 +24,12 @@ export class RepaymentRecordsController {
   ) {}
 
   @Get()
-  @Roles(ManagementRoles.负责人, ManagementRoles.风控人, ManagementRoles.收款人)
+  @Roles(
+    ManagementRoles.管理员,
+    ManagementRoles.负责人,
+    ManagementRoles.风控人,
+    ManagementRoles.收款人,
+  )
   async findAll(
     @Query() query: PaginationQueryDto,
     @CurrentUser() user: any,

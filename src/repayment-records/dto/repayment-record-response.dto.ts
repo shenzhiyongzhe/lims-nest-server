@@ -8,6 +8,7 @@ export class RepaymentRecordResponseDto {
   paid_at: Date;
   payment_method: PaymentMethod;
   payee_id: number;
+  payee_name?: string;
   remark?: string;
   order_id: string;
   // 用户信息

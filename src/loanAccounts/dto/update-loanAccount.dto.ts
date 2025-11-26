@@ -94,5 +94,11 @@ export class UpdateLoanAccountDto {
   @IsNumber()
   @IsOptional()
   company_cost?: number;
+
+  @IsNumber()
+  @IsPositive()
+  @IsOptional()
+  @Min(1)
+  apply_times?: number;
 }
 

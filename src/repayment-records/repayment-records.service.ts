@@ -252,6 +252,7 @@ export class RepaymentRecordsService {
       paid_at: record.paid_at,
       payment_method: record.payment_method,
       payee_id: record.payee_id,
+      payee_name: record.payee?.username || undefined,
       remark: record.remark || undefined,
       order_id: record.order_id,
       // 用户信息

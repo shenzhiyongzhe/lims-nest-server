@@ -129,7 +129,7 @@ export class LoanAccountsController {
   }
 
   @UseGuards(AuthGuard, RolesGuard)
-  @Roles(ManagementRoles.管理员)
+  @Roles(ManagementRoles.管理员, ManagementRoles.负责人)
   @Put(':id')
   async update(
     @Param('id') id: string,
@@ -145,7 +145,7 @@ export class LoanAccountsController {
   }
 
   @UseGuards(AuthGuard, RolesGuard)
-  @Roles(ManagementRoles.管理员)
+  @Roles(ManagementRoles.管理员, ManagementRoles.负责人)
   @Put(':id/status')
   async updateStatus(
     @Param('id') id: string,

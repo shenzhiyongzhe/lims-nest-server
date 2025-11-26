@@ -1,6 +1,11 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { RepaymentSchedule, RepaymentScheduleStatus } from '@prisma/client';
+import {
+  RepaymentSchedule,
+  RepaymentScheduleStatus,
+  OrderStatus,
+  PaymentMethod,
+} from '@prisma/client';
 import { RepaymentScheduleResponseDto } from './dto/repayment-schedule-response.dto';
 
 @Injectable()
@@ -75,6 +80,7 @@ export class RepaymentSchedulesService {
           fines: true,
           status: true,
           due_end_date: true,
+          paid_amount: true,
         },
       });
 
@@ -158,10 +164,59 @@ export class RepaymentSchedulesService {
         data: updatePayload,
       });
 
-      // 3. 同步更新 LoanAccount 的 receiving_amount 和 repaid_periods
+      // 3. 若 paid_amount 有增加，则记录还款记录并同步 LoanAccount
       const loanId = currentSchedule.loan_id;
 
-      // 计算 receiving_amount：所有还款计划的 paid_amount 总和
+      // 计算 paid_amount 增量
+      const prevPaid = Number(currentSchedule.paid_amount || 0);
+      const currPaid = Number(updatedSchedule.paid_amount || 0);
+      const incPaid = Math.max(0, currPaid - prevPaid);
+
+      if (incPaid > 0) {
+        // 获取 LoanAccount 与 Payee 信息
+        const loan = await tx.loanAccount.findUnique({
+          where: { id: loanId },
+          select: { user_id: true, payee_id: true },
+        });
+        let payee = null as null | { id: number };
+        if (loan?.payee_id) {
+          payee = await tx.payee.findFirst({
+            where: { admin_id: loan.payee_id },
+            select: { id: true },
+          });
+        }
+
+        // 创建一个完成的订单用于关联还款记录
+        const order = await tx.order.create({
+          data: {
+            customer_id: loan!.user_id,
+            loan_id: loanId,
+            amount: incPaid,
+            payment_periods: 1,
+            payment_method: PaymentMethod.wechat_pay,
+            remark: '手动更新还款计划自动生成',
+            status: OrderStatus.completed,
+            payee_id: payee?.id,
+            expires_at: new Date(),
+          },
+        });
+
+        // 1. 创建还款记录（参考 orders.service.ts 写法）
+        await tx.repaymentRecord.create({
+          data: {
+            loan_id: loanId,
+            user_id: loan!.user_id,
+            paid_amount: incPaid,
+            paid_at: new Date(),
+            payment_method: PaymentMethod.wechat_pay,
+            payee_id: payee?.id ?? 0,
+            remark: '来源：编辑还款计划',
+            order_id: order.id,
+          },
+        });
+      }
+
+      // 重新计算 receiving_amount：所有还款计划的 paid_amount 总和
       const allSchedules = await tx.repaymentSchedule.findMany({
         where: { loan_id: loanId },
         select: { paid_amount: true },

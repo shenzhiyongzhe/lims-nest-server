@@ -146,6 +146,29 @@ export class LoanAccountsController {
 
   @UseGuards(AuthGuard, RolesGuard)
   @Roles(ManagementRoles.管理员)
+  @Put(':id/status')
+  async updateStatus(
+    @Param('id') id: string,
+    @Body() body: { status: LoanAccountStatus },
+  ): Promise<ApiResponseDto> {
+    try {
+      if (!body.status) {
+        return ResponseHelper.error('缺少状态参数', 400);
+      }
+
+      const updated = await this.loanAccountsService.updateStatus(
+        id,
+        body.status,
+      );
+      return ResponseHelper.success(updated, '更新贷款状态成功');
+    } catch (error: any) {
+      console.error('更新贷款状态错误:', error);
+      return ResponseHelper.error(`更新贷款状态失败: ${error.message}`, 500);
+    }
+  }
+
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(ManagementRoles.管理员)
   @Delete(':id')
   async delete(
     @Param('id') id: string,

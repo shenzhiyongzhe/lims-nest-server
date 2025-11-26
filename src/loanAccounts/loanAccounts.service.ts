@@ -484,6 +484,151 @@ export class LoanAccountsService {
     return updated;
   }
 
+  async updateStatus(
+    id: string,
+    newStatus: LoanAccountStatus,
+  ): Promise<LoanAccount> {
+    // 检查贷款记录是否存在
+    const loan = await this.prisma.loanAccount.findUnique({
+      where: { id },
+      include: {
+        repaymentSchedules: true,
+      },
+    });
+
+    if (!loan) {
+      throw new Error('贷款记录不存在');
+    }
+
+    // 如果新状态是 settled（已结清），需要原子性地更新所有关联的 repaymentSchedule
+    if (newStatus === 'settled') {
+      const updated = await this.prisma.$transaction(async (tx) => {
+        // 获取所有关联的还款计划
+        const schedules = await tx.repaymentSchedule.findMany({
+          where: { loan_id: id },
+        });
+
+        // 仅更新状态为 pending 或 active 的还款计划为已支付状态
+        const targetSchedules = schedules.filter(
+          (s) => s.status === 'pending' || s.status === 'active',
+        );
+        for (const schedule of targetSchedules) {
+          const dueAmount = this.toNumber(schedule.due_amount);
+          const fines = this.toNumber(schedule.fines);
+          await tx.repaymentSchedule.update({
+            where: { id: schedule.id },
+            data: {
+              status: 'paid' as RepaymentScheduleStatus,
+              remaining_capital: 0,
+              remaining_interest: 0,
+              paid_amount: dueAmount + fines,
+            },
+          });
+        }
+
+        // 计算结算后的 receiving_amount（本金+利息+罚金）
+        const receivingAmount = schedules.reduce((sum, s) => {
+          if (s.status === 'pending' || s.status === 'active') {
+            // 将要被置为已支付：应还款 + 罚金
+            return sum + this.toNumber(s.due_amount) + this.toNumber(s.fines);
+          }
+          // 已支付的则使用已支付金额
+          return sum + this.toNumber(s.paid_amount);
+        }, 0);
+
+        // 更新贷款账户
+        const totalPeriods = loan.total_periods || schedules.length;
+        const updated = await tx.loanAccount.update({
+          where: { id },
+          data: {
+            status: newStatus,
+            repaid_periods: totalPeriods,
+            // 重新计算 receiving_amount（包含罚金）
+            receiving_amount: receivingAmount,
+          },
+          include: {
+            user: true,
+            repaymentSchedules: {
+              orderBy: {
+                period: 'asc',
+              },
+            },
+            risk_controller: {
+              select: {
+                id: true,
+                username: true,
+              },
+            },
+            collector: {
+              select: {
+                id: true,
+                username: true,
+              },
+            },
+            payee: {
+              select: {
+                id: true,
+                username: true,
+              },
+            },
+            lender: {
+              select: {
+                id: true,
+                username: true,
+              },
+            },
+          },
+        });
+
+        return updated;
+      });
+
+      return updated;
+    } else {
+      // 对于其他状态，直接更新
+      const updated = await this.prisma.loanAccount.update({
+        where: { id },
+        data: {
+          status: newStatus,
+        },
+        include: {
+          user: true,
+          repaymentSchedules: {
+            orderBy: {
+              period: 'asc',
+            },
+          },
+          risk_controller: {
+            select: {
+              id: true,
+              username: true,
+            },
+          },
+          collector: {
+            select: {
+              id: true,
+              username: true,
+            },
+          },
+          payee: {
+            select: {
+              id: true,
+              username: true,
+            },
+          },
+          lender: {
+            select: {
+              id: true,
+              username: true,
+            },
+          },
+        },
+      });
+
+      return updated;
+    }
+  }
+
   async delete(id: string, force: boolean = false): Promise<void> {
     // 检查记录是否存在
     const loan = await this.prisma.loanAccount.findUnique({

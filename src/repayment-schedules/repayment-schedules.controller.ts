@@ -74,6 +74,7 @@ export class RepaymentSchedulesController {
   async update(
     @Body() data: any,
     @Req() request: any,
+    @CurrentUser() user: { id: number; role: string },
   ): Promise<ApiResponseDto> {
     // 获取更新前的完整数据（用于操作日志）
     // 必须在更新操作之前查询，确保获取的是更新前的数据
@@ -187,8 +188,10 @@ export class RepaymentSchedulesController {
     }
 
     // 执行更新操作
-    const updatedSchedule =
-      await this.repaymentSchedulesService.update(updateData);
+    const updatedSchedule = await this.repaymentSchedulesService.update(
+      updateData,
+      user?.id,
+    );
 
     // 返回完整的更新后数据，以便操作日志拦截器记录 new_data
     // 只返回必要的字段，避免返回关联数据

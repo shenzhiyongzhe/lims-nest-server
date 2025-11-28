@@ -140,6 +140,9 @@ model RepaymentSchedule {
   status         RepaymentScheduleStatus  @default(pending)
   paid_amount    Decimal?         @db.Decimal(10, 2)
   paid_at        DateTime?
+  collected_by_type CollectionSource?
+  operator_admin_id Int?
+  operator_admin_name String? @db.VarChar(50)
 
   // 外键关系到 LoanAccount
   loan_account LoanAccount @relation(fields: [loan_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
@@ -152,6 +155,13 @@ enum PaymentMethod{
   wechat_pay
   ali_pay
 }
+
+// 收款来源：抢单 or 手动
+enum CollectionSource {
+  grabbed
+  manual
+}
+
 model RepaymentRecord {
   id              Int @id @default(autoincrement())
   loan_id         String 
@@ -162,6 +172,9 @@ model RepaymentRecord {
   payee_id        Int
   remark          String? @db.VarChar(255)
   order_id        String
+  collected_by_type CollectionSource @default(grabbed)
+  operator_admin_id Int?
+  operator_admin_name String? @db.VarChar(50)
 
   order         Order? @relation(fields: [order_id], references: [id])
   loan_account  LoanAccount? @relation(fields: [loan_id], references: [id])
@@ -240,6 +253,9 @@ model Order {
   created_at      DateTime @default(now())
   updated_at      DateTime? @updatedAt
   expires_at      DateTime
+  collected_by_type CollectionSource @default(grabbed)
+  processed_by_admin_id Int?
+  processed_by_admin_name String? @db.VarChar(50)
 
   customer        User     @relation(fields: [customer_id], references: [id])
   payee           Payee?   @relation(fields: [payee_id], references: [id])

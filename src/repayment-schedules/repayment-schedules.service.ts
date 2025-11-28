@@ -5,6 +5,7 @@ import {
   RepaymentScheduleStatus,
   OrderStatus,
   PaymentMethod,
+  CollectionSource,
 } from '@prisma/client';
 import { RepaymentScheduleResponseDto } from './dto/repayment-schedule-response.dto';
 
@@ -66,6 +67,7 @@ export class RepaymentSchedulesService {
       pay_interest?: number;
       fines?: number;
     },
+    operatorAdminId?: number,
   ): Promise<RepaymentSchedule> {
     return await this.prisma.$transaction(async (tx) => {
       // 1. 获取更新前的还款计划数据
@@ -124,6 +126,10 @@ export class RepaymentSchedulesService {
         remaining_interest: newRemainingInterest,
       };
 
+      // 预先计算是否有新增实付
+      const prevPaid = Number(currentSchedule.paid_amount || 0);
+      // finesValue 在后续已计算
+
       if (updatePayload.fines !== undefined) {
         updatePayload.fines = Number(updatePayload.fines);
       }
@@ -133,13 +139,33 @@ export class RepaymentSchedulesService {
           ? Number(updatePayload.fines)
           : toNumber(currentSchedule.fines);
 
+      // 获取操作人名称（用于手动收款写入）
+      let operatorName: string | null = null;
+      if (operatorAdminId) {
+        const op = await this.prisma.admin.findUnique({
+          where: { id: operatorAdminId },
+          select: { username: true },
+        });
+        operatorName = op?.username ?? null;
+      }
+
       const paidAmount =
         baseCapital -
         newRemainingCapital +
         (baseInterest - newRemainingInterest) +
         finesValue;
 
-      updatePayload.paid_amount = Number(paidAmount.toFixed(2));
+      const nextPaid = Number(paidAmount.toFixed(2));
+      updatePayload.paid_amount = nextPaid;
+
+      const incPaidBeforeUpdate = Math.max(0, nextPaid - prevPaid);
+      if (incPaidBeforeUpdate > 0) {
+        updatePayload.collected_by_type = 'manual';
+        if (operatorAdminId) {
+          updatePayload.operator_admin_id = operatorAdminId;
+          updatePayload.operator_admin_name = operatorName;
+        }
+      }
 
       const hasCapitalProgress =
         baseCapital > 0 && newRemainingCapital < baseCapital;
@@ -168,7 +194,7 @@ export class RepaymentSchedulesService {
       const loanId = currentSchedule.loan_id;
 
       // 计算 paid_amount 增量
-      const prevPaid = Number(currentSchedule.paid_amount || 0);
+      // const prevPaid = Number(currentSchedule.paid_amount || 0);
       const currPaid = Number(updatedSchedule.paid_amount || 0);
       const incPaid = Math.max(0, currPaid - prevPaid);
 
@@ -185,8 +211,17 @@ export class RepaymentSchedulesService {
             select: { id: true },
           });
         }
+        // 获取操作人名称（用于显示）
+        let operatorName: string | null = null;
+        if (operatorAdminId) {
+          const op = await tx.admin.findUnique({
+            where: { id: operatorAdminId },
+            select: { username: true },
+          });
+          operatorName = op?.username ?? null;
+        }
 
-        // 创建一个完成的订单用于关联还款记录
+        // 创建一个完成的订单用于关联还款记录（标记为手动收款）
         const order = await tx.order.create({
           data: {
             customer_id: loan!.user_id,
@@ -198,6 +233,9 @@ export class RepaymentSchedulesService {
             status: OrderStatus.completed,
             payee_id: payee?.id,
             expires_at: new Date(),
+            collected_by_type: 'manual',
+            processed_by_admin_id: operatorAdminId ?? null,
+            processed_by_admin_name: operatorName ?? null,
           },
         });
 
@@ -212,6 +250,9 @@ export class RepaymentSchedulesService {
             payee_id: payee?.id ?? 0,
             remark: '来源：编辑还款计划',
             order_id: order.id,
+            collected_by_type: 'manual',
+            operator_admin_id: operatorAdminId ?? null,
+            operator_admin_name: operatorName ?? null,
           },
         });
       }

@@ -10,7 +10,7 @@ export class ScheduleStatusService {
 
   // 每5分钟检查一次还款计划的状态并更新（pending->active->overdue）
   // @Cron(CronExpression.EVERY_5_MINUTES)
-  @Cron('5 6 * * *')
+  @Cron('0 6 * * *')
   async updateRepaymentScheduleStatuses() {
     const now = new Date();
     // 激活：已到达开始时间且未到结束时间

@@ -5,7 +5,6 @@ import {
   RepaymentScheduleStatus,
   OrderStatus,
   PaymentMethod,
-  CollectionSource,
 } from '@prisma/client';
 import { RepaymentScheduleResponseDto } from './dto/repayment-schedule-response.dto';
 
@@ -77,8 +76,8 @@ export class RepaymentSchedulesService {
           loan_id: true,
           capital: true,
           interest: true,
-          remaining_capital: true,
-          remaining_interest: true,
+          paid_capital: true,
+          paid_interest: true,
           fines: true,
           status: true,
           due_end_date: true,
@@ -99,31 +98,23 @@ export class RepaymentSchedulesService {
       const baseCapital = toNumber(currentSchedule.capital);
       const baseInterest = toNumber(currentSchedule.interest);
 
-      const prevRemainingCapital =
-        currentSchedule.remaining_capital !== null &&
-        currentSchedule.remaining_capital !== undefined
-          ? Number(currentSchedule.remaining_capital)
-          : baseCapital;
-      const prevRemainingInterest =
-        currentSchedule.remaining_interest !== null &&
-        currentSchedule.remaining_interest !== undefined
-          ? Number(currentSchedule.remaining_interest)
-          : baseInterest;
+      const prevPaidCapital = toNumber(currentSchedule.paid_capital);
+      const prevPaidInterest = toNumber(currentSchedule.paid_interest);
 
-      const newRemainingCapital = Math.max(
-        0,
-        prevRemainingCapital - payCapital,
+      const newPaidCapital = Math.min(
+        baseCapital,
+        Math.max(0, prevPaidCapital + payCapital),
       );
-      const newRemainingInterest = Math.max(
-        0,
-        prevRemainingInterest - payInterest,
+      const newPaidInterest = Math.min(
+        baseInterest,
+        Math.max(0, prevPaidInterest + payInterest),
       );
 
       const { pay_capital, pay_interest, ...restData } = data;
       const updatePayload: any = {
         ...restData,
-        remaining_capital: newRemainingCapital,
-        remaining_interest: newRemainingInterest,
+        paid_capital: newPaidCapital,
+        paid_interest: newPaidInterest,
       };
 
       // 预先计算是否有新增实付
@@ -149,12 +140,7 @@ export class RepaymentSchedulesService {
         operatorName = op?.username ?? null;
       }
 
-      const paidAmount =
-        baseCapital -
-        newRemainingCapital +
-        (baseInterest - newRemainingInterest) +
-        finesValue;
-
+      const paidAmount = newPaidCapital + newPaidInterest + finesValue;
       const nextPaid = Number(paidAmount.toFixed(2));
       updatePayload.paid_amount = nextPaid;
 
@@ -168,12 +154,14 @@ export class RepaymentSchedulesService {
       }
 
       const hasCapitalProgress =
-        baseCapital > 0 && newRemainingCapital < baseCapital;
+        baseCapital > 0 && newPaidCapital > 0 && newPaidCapital < baseCapital;
       const hasInterestProgress =
-        baseInterest > 0 && newRemainingInterest < baseInterest;
+        baseInterest > 0 &&
+        newPaidInterest > 0 &&
+        newPaidInterest < baseInterest;
 
       let derivedStatus: RepaymentScheduleStatus = currentSchedule.status;
-      if (newRemainingCapital <= 0 && newRemainingInterest <= 0) {
+      if (newPaidCapital >= baseCapital && newPaidInterest >= baseInterest) {
         derivedStatus = 'paid';
       } else if (
         hasCapitalProgress ||
@@ -257,13 +245,21 @@ export class RepaymentSchedulesService {
         });
       }
 
-      // 重新计算 receiving_amount：所有还款计划的 paid_amount 总和
+      // 重新计算 receiving_amount：所有还款计划的(已还本金+已还利息+罚金) 之和，并汇总 LoanAccount 的已还本金
       const allSchedules = await tx.repaymentSchedule.findMany({
         where: { loan_id: loanId },
-        select: { paid_amount: true },
+        select: { paid_capital: true, paid_interest: true, fines: true },
       });
       const totalReceiving = allSchedules.reduce(
-        (sum, schedule) => sum + Number(schedule.paid_amount || 0),
+        (sum, s) =>
+          sum +
+          Number(s.paid_capital || 0) +
+          Number(s.paid_interest || 0) +
+          Number(s.fines || 0),
+        0,
+      );
+      const loanPaidCapital = allSchedules.reduce(
+        (sum, s) => sum + Number(s.paid_capital || 0),
         0,
       );
 
@@ -281,6 +277,7 @@ export class RepaymentSchedulesService {
         where: { id: loanId },
         data: {
           receiving_amount: totalReceiving,
+          paid_capital: loanPaidCapital,
           repaid_periods: repaidPeriods,
         },
       });

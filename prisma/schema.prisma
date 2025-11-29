@@ -79,12 +79,13 @@ model LoanAccount {
   user_id           Int
   loan_amount       Decimal   @db.Decimal(10, 2)
   receiving_amount  Decimal?  @db.Decimal(10, 2)
+  paid_capital      Decimal   @db.Decimal(10, 2) @default(0)
   to_hand_ratio     Decimal?   @db.Decimal(10, 2)
   capital           Decimal   @db.Decimal(10, 2)
   interest          Decimal   @db.Decimal(10, 2)
   due_start_date    DateTime
   due_end_date      DateTime
-  apply_times       Int       @default(1)
+  apply_times       Int       @default(0)
   status            LoanAccountStatus  @default(pending)
   handling_fee      Decimal   @db.Decimal(10, 2)
   total_periods     Int
@@ -134,8 +135,8 @@ model RepaymentSchedule {
   due_amount     Decimal          @db.Decimal(10, 2)
   capital        Decimal?         @db.Decimal(10, 2)
   interest       Decimal?         @db.Decimal(10, 2)
-  remaining_capital  Decimal?     @db.Decimal(10, 2)
-  remaining_interest Decimal?     @db.Decimal(10, 2)
+  paid_capital      Decimal?     @db.Decimal(10, 2) @default(0)
+  paid_interest     Decimal?     @db.Decimal(10, 2) @default(0)
   fines          Decimal?         @db.Decimal(10, 2) @default(0)
   status         RepaymentScheduleStatus  @default(pending)
   paid_amount    Decimal?         @db.Decimal(10, 2)

@@ -10,15 +10,12 @@ export class StatisticsCronService {
 
   @Cron('0 6 * * *') // 每天早上6点执行
   async handleDailyStatisticsCalculation() {
-    this.logger.log('🕛 开始执行每日统计数据计算任务');
+    this.logger.log('🕕 开始执行当天统计数据计算任务');
 
     try {
-      // 计算前一天的统计数据（因为6点前的数据属于前一天）
-      // 业务日期规则：6点后算当天，6点前算前一天
-      // 定时任务在6点执行，此时应该计算前一天的完整数据
+      // 改为统计“当天”数据：以当天 00:00 为统计日期
       const now = new Date();
       const targetDate = new Date(now);
-      targetDate.setDate(now.getDate() - 1); // 前一天
       targetDate.setHours(0, 0, 0, 0);
 
       await this.statisticsService.calculateDailyStatistics(targetDate);

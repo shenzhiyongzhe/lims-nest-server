@@ -16,7 +16,14 @@ export class PayeesService {
   constructor(private readonly prisma: PrismaService) {}
 
   create(data: CreatePayeeDto): Promise<Payee> {
-    return this.prisma.payee.create({ data });
+    const payload: CreatePayeeDto = {
+      ...data,
+      // 默认值：若未传入则使用默认
+      address: data.address ?? '广东深圳',
+      payment_limit: (data as any).payment_limit ?? 1000,
+      qrcode_number: (data as any).qrcode_number ?? 3,
+    } as CreatePayeeDto;
+    return this.prisma.payee.create({ data: payload });
   }
   findAll(): Promise<Payee[]> {
     return this.prisma.payee.findMany();

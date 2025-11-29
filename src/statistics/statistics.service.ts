@@ -727,6 +727,7 @@ export class StatisticsService {
         loan_amount: Number(account.loan_amount),
         receiving_amount: Number(account.receiving_amount || 0),
         capital: Number(account.capital),
+        paid_capital: Number(account.paid_capital),
         interest: Number(account.interest),
         status: account.status,
         total_periods: account.total_periods,

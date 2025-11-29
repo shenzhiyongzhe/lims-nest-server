@@ -176,30 +176,28 @@ export class RepaymentRecordsService {
 
       where.loan_id = { in: loanIds };
     } else if (admin.role === '负责人') {
-      // 负责人可以查看所有还款记录，但可以按负责人过滤
-      if (collector) {
-        const loanAccounts = await this.prisma.loanAccount.findMany({
-          where: { collector_id: admin.id },
-          select: { id: true },
-        });
-        const loanIds = loanAccounts.map((la) => la.id);
+      // 负责人只能查看自己负责的贷款的还款记录
+      const loanAccounts = await this.prisma.loanAccount.findMany({
+        where: { collector_id: admin.id },
+        select: { id: true },
+      });
+      const loanIds = loanAccounts.map((la) => la.id);
 
-        if (loanIds.length === 0) {
-          return {
-            data: [],
-            pagination: {
-              page,
-              pageSize,
-              total: 0,
-              totalPages: 0,
-              hasNext: false,
-              hasPrev: false,
-            },
-          };
-        }
-
-        where.loan_id = { in: loanIds };
+      if (loanIds.length === 0) {
+        return {
+          data: [],
+          pagination: {
+            page,
+            pageSize,
+            total: 0,
+            totalPages: 0,
+            hasNext: false,
+            hasPrev: false,
+          },
+        };
       }
+
+      where.loan_id = { in: loanIds };
     }
 
     if (userId) where.user_id = userId;

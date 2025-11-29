@@ -18,9 +18,26 @@ export class AdminService {
     return this.prisma.admin.findMany({ where: { role } });
   }
 
-  create(data: CreateAdminDto): Promise<Admin> {
-    return this.prisma.admin.create({
-      data: { ...data, role: data.role as ManagementRoles },
+  async create(data: CreateAdminDto): Promise<Admin> {
+    return this.prisma.$transaction(async (tx) => {
+      const created = await tx.admin.create({
+        data: { ...data, role: data.role as ManagementRoles },
+      });
+
+      // 如果创建的是收款人，自动创建对应的 Payee
+      if (created.role === '收款人') {
+        await tx.payee.create({
+          data: {
+            admin_id: created.id,
+            username: created.username,
+            address: '广东深圳',
+            payment_limit: 1000,
+            qrcode_number: 3,
+          },
+        });
+      }
+
+      return created;
     });
   }
   update(id: number, data: CreateAdminDto): Promise<Admin> {

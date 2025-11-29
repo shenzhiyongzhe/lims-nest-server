@@ -42,8 +42,9 @@ export class LoanAccountsService {
     // 设置时间
     const startDate = new Date(due_start_date);
     const endDate = new Date(data.due_end_date);
-    startDate.setHours(6, 0, 0, 0);
-    endDate.setHours(6, 0, 0, 0);
+    // 账户级别开始/结束时间：当天00:00:00 至 当天23:59:59.999
+    startDate.setHours(0, 0, 0, 0);
+    endDate.setHours(23, 59, 59, 999);
 
     // 使用事务：创建贷款记录并批量创建还款计划
     const loan = await this.prisma.$transaction(async (tx) => {
@@ -51,7 +52,7 @@ export class LoanAccountsService {
         where: { user_id: data.user_id },
       });
 
-      const applyTimes = existingCount + 1;
+      const applyTimes = existingCount;
 
       const created = await tx.loanAccount.create({
         data: {
@@ -79,25 +80,46 @@ export class LoanAccountsService {
       });
 
       const periods = Number(total_periods) || 0;
-      const perAmount = Number(daily_repayment) || created.daily_repayment || 0;
+      const perCapital = Number(capital) || 0; // 每期本金（除最后一期）
+      const perInterest = Number(interest) || 0; // 每期利息（固定不变）
 
+      // 生成还款计划：最后一期本金为剩余本金；应还金额 = 本金 + 利息
+      let remainingPrincipal = Number(data.loan_amount) || 0; // 假定 loan_amount 为总本金
       const rows = Array.from({ length: periods }).map((_, idx) => {
         const d = new Date(created.due_start_date);
         d.setDate(d.getDate() + idx);
-        d.setHours(6, 0, 0, 0);
+        // 当天 00:00:00 开始
+        d.setHours(0, 0, 0, 0);
+        // 当天 23:59:59.999 截止
         const end = new Date(d);
-        end.setDate(end.getDate() + 1);
-        end.setHours(6, 0, 0, 0);
+        end.setHours(23, 59, 59, 999);
+
+        // 计算本期本金：前 n-1 期使用固定每期本金，最后一期取剩余本金
+        let curCapital = 0;
+        if (idx < periods - 1) {
+          curCapital = Math.min(perCapital, Math.max(0, remainingPrincipal));
+        } else {
+          curCapital = Math.max(0, remainingPrincipal);
+        }
+        curCapital = Number(curCapital.toFixed(2));
+
+        const curInterest = Number(perInterest.toFixed(2));
+        const dueAmount = Number((curCapital + curInterest).toFixed(2));
+
+        remainingPrincipal = Number(
+          Math.max(0, remainingPrincipal - curCapital).toFixed(2),
+        );
+
         return {
           loan_id: created.id,
           period: idx + 1,
           due_start_date: d,
           due_end_date: end,
-          due_amount: perAmount,
-          capital: capital ? Number(capital) : null,
-          interest: interest ? Number(interest) : null,
-          remaining_capital: capital ? Number(capital) : null,
-          remaining_interest: interest ? Number(interest) : null,
+          due_amount: dueAmount,
+          capital: curCapital,
+          interest: perInterest || null,
+          paid_capital: 0,
+          paid_interest: 0,
           status: data.status as RepaymentScheduleStatus,
         };
       });
@@ -194,26 +216,19 @@ export class LoanAccountsService {
       0,
     );
 
-    const remainingCapital = schedules.reduce((sum, schedule) => {
-      const remaining =
-        schedule.remaining_capital !== null &&
-        schedule.remaining_capital !== undefined
-          ? Number(schedule.remaining_capital)
-          : sumNumber(schedule.capital);
-      return sum + remaining;
-    }, 0);
+    // 已还本金/利息
+    const paidCapital = schedules.reduce(
+      (sum, schedule) => sum + sumNumber(schedule.paid_capital),
+      0,
+    );
+    const paidInterest = schedules.reduce(
+      (sum, schedule) => sum + sumNumber(schedule.paid_interest),
+      0,
+    );
 
-    const remainingInterest = schedules.reduce((sum, schedule) => {
-      const remaining =
-        schedule.remaining_interest !== null &&
-        schedule.remaining_interest !== undefined
-          ? Number(schedule.remaining_interest)
-          : sumNumber(schedule.interest);
-      return sum + remaining;
-    }, 0);
-
-    const paidCapital = Math.max(totalCapital - remainingCapital, 0);
-    const paidInterest = Math.max(totalInterest - remainingInterest, 0);
+    // 剩余（待还）本金/利息
+    const remainingCapital = Math.max(totalCapital - paidCapital, 0);
+    const remainingInterest = Math.max(totalInterest - paidInterest, 0);
 
     const totalFines = schedules.reduce(
       (sum, schedule) => sum + sumNumber(schedule.fines),
@@ -222,8 +237,13 @@ export class LoanAccountsService {
 
     const unpaidCapital = remainingCapital;
 
+    // 已收金额 = 所有期的已还本金+已还利息+罚金
     const receivingAmount = schedules.reduce(
-      (sum, schedule) => sum + sumNumber(schedule.paid_amount),
+      (sum, schedule) =>
+        sum +
+        sumNumber(schedule.paid_capital) +
+        sumNumber(schedule.paid_interest) +
+        sumNumber(schedule.fines),
       0,
     );
 
@@ -328,13 +348,13 @@ export class LoanAccountsService {
     // 处理日期字段
     if (data.due_start_date) {
       const startDate = new Date(data.due_start_date);
-      startDate.setHours(6, 0, 0, 0);
+      startDate.setHours(0, 0, 0, 0);
       updateData.due_start_date = startDate;
     }
 
     if (data.due_end_date) {
       const endDate = new Date(data.due_end_date);
-      endDate.setHours(6, 0, 0, 0);
+      endDate.setHours(23, 59, 59, 999);
       updateData.due_end_date = endDate;
     }
 
@@ -529,8 +549,8 @@ export class LoanAccountsService {
             where: { id: schedule.id },
             data: {
               status: 'paid' as RepaymentScheduleStatus,
-              remaining_capital: 0,
-              remaining_interest: 0,
+              paid_capital: 0,
+              paid_interest: 0,
               paid_amount: dueAmount + fines,
             },
           });

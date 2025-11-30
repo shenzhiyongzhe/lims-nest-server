@@ -262,6 +262,10 @@ export class RepaymentSchedulesService {
         (sum, s) => sum + Number(s.paid_capital || 0),
         0,
       );
+      const totalFines = allSchedules.reduce(
+        (sum, s) => sum + Number(s.fines || 0),
+        0,
+      );
 
       // 计算 repaid_periods：状态为 paid 的计划数量
       const paidSchedules = await tx.repaymentSchedule.findMany({
@@ -279,6 +283,7 @@ export class RepaymentSchedulesService {
           receiving_amount: totalReceiving,
           paid_capital: loanPaidCapital,
           repaid_periods: repaidPeriods,
+          total_fines: totalFines,
         },
       });
 

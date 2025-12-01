@@ -41,17 +41,26 @@ export class LoanAccountsService {
 
     // 设置时间
     // 解析日期字符串（YYYY-MM-DD 格式）
+    // 使用 UTC 时间创建日期，避免时区转换导致的日期偏移
     const parseDate = (dateStr: string): Date => {
       const match = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
       if (match) {
         const [, year, month, day] = match;
-        const date = new Date(Number(year), Number(month) - 1, Number(day));
-        date.setHours(0, 0, 0, 0);
-        return date;
+        // 使用 UTC 时间创建日期，确保日期部分不会因时区转换而改变
+        return new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
       }
       // 如果格式不匹配，尝试直接解析
       const date = new Date(dateStr);
-      date.setHours(0, 0, 0, 0);
+      // 如果解析成功，转换为 UTC 时间的午夜
+      if (!isNaN(date.getTime())) {
+        return new Date(
+          Date.UTC(
+            date.getUTCFullYear(),
+            date.getUTCMonth(),
+            date.getUTCDate(),
+          ),
+        );
+      }
       return date;
     };
 
@@ -99,13 +108,17 @@ export class LoanAccountsService {
       let remainingPrincipal = Number(data.loan_amount) || 0; // 假定 loan_amount 为总本金
       const rows = Array.from({ length: periods }).map((_, idx) => {
         // 计算每期的开始日期：第一期使用 due_start_date，后续每期依次往后延
-        const d = new Date(created.due_start_date);
-        d.setDate(d.getDate() + idx);
-        // 当天 00:00:00 开始（Date 类型，不包含时间）
-        d.setHours(0, 0, 0, 0);
+        // 使用 UTC 时间计算，避免时区转换问题
+        const baseDate = new Date(created.due_start_date);
+        const d = new Date(
+          Date.UTC(
+            baseDate.getUTCFullYear(),
+            baseDate.getUTCMonth(),
+            baseDate.getUTCDate() + idx,
+          ),
+        );
         // 结束日期：当天（Date 类型，不包含时间）
         const end = new Date(d);
-        end.setHours(0, 0, 0, 0);
 
         // 计算本期本金：前 n-1 期使用固定每期本金，最后一期取剩余本金
         let curCapital = 0;
@@ -371,6 +384,7 @@ export class LoanAccountsService {
       let newDueStartDate: Date | null = null;
 
       // 处理日期字段（日期类型，不包含时间）
+      // 使用 UTC 时间的午夜来创建日期，避免时区转换问题
       if (data.due_start_date) {
         // 解析 YYYY-MM-DD 格式的日期字符串
         const dateMatch = data.due_start_date.match(
@@ -378,12 +392,10 @@ export class LoanAccountsService {
         );
         if (dateMatch) {
           const [, year, month, day] = dateMatch;
+          // 使用 UTC 时间创建日期，避免时区转换导致的日期偏移
           const startDate = new Date(
-            Number(year),
-            Number(month) - 1,
-            Number(day),
+            Date.UTC(Number(year), Number(month) - 1, Number(day)),
           );
-          startDate.setHours(0, 0, 0, 0);
           updateData.due_start_date = startDate;
           newDueStartDate = startDate;
         }
@@ -394,12 +406,10 @@ export class LoanAccountsService {
         const dateMatch = data.due_end_date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
         if (dateMatch) {
           const [, year, month, day] = dateMatch;
+          // 使用 UTC 时间创建日期，避免时区转换导致的日期偏移
           const endDate = new Date(
-            Number(year),
-            Number(month) - 1,
-            Number(day),
+            Date.UTC(Number(year), Number(month) - 1, Number(day)),
           );
-          endDate.setHours(0, 0, 0, 0);
           updateData.due_end_date = endDate;
         }
       }
@@ -479,11 +489,17 @@ export class LoanAccountsService {
       // 如果 due_start_date 改变了，同步更新所有相关的 RepaymentSchedule
       if (newDueStartDate && oldLoan.due_start_date) {
         const oldStartDate = new Date(oldLoan.due_start_date);
-        oldStartDate.setHours(0, 0, 0, 0);
 
         // 比较日期（只比较年月日，忽略时间）
-        const oldDateStr = oldStartDate.toISOString().split('T')[0];
-        const newDateStr = newDueStartDate.toISOString().split('T')[0];
+        // 使用 UTC 日期格式化，避免时区转换问题
+        const formatUTCDate = (date: Date): string => {
+          const year = date.getUTCFullYear();
+          const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+          const day = String(date.getUTCDate()).padStart(2, '0');
+          return `${year}-${month}-${day}`;
+        };
+        const oldDateStr = formatUTCDate(oldStartDate);
+        const newDateStr = formatUTCDate(newDueStartDate);
 
         if (oldDateStr !== newDateStr) {
           // 获取所有相关的还款计划，按 period 排序
@@ -499,15 +515,18 @@ export class LoanAccountsService {
             // 第一期：period = 1，所以加 0 天
             // 第二期：period = 2，所以加 1 天
             // 第三期：period = 3，所以加 2 天
-            const newStartDate = new Date(newDueStartDate);
-            newStartDate.setDate(
-              newStartDate.getDate() + (schedule.period - 1),
+            // 使用 UTC 时间计算，避免时区转换问题
+            const baseDate = new Date(newDueStartDate);
+            const newStartDate = new Date(
+              Date.UTC(
+                baseDate.getUTCFullYear(),
+                baseDate.getUTCMonth(),
+                baseDate.getUTCDate() + (schedule.period - 1),
+              ),
             );
-            newStartDate.setHours(0, 0, 0, 0);
 
             // 计算新的结束日期：当天（Date 类型，不包含时间）
             const newEndDate = new Date(newStartDate);
-            newEndDate.setHours(0, 0, 0, 0);
 
             await tx.repaymentSchedule.update({
               where: { id: schedule.id },

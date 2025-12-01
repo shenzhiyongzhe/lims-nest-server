@@ -112,25 +112,40 @@ export class RepaymentSchedulesController {
     };
 
     // 处理日期字段：将日期字符串转换为 Date（不包含时间）
+    // 使用 UTC 时间创建日期，避免时区转换导致的日期偏移
     if (data.due_end_date) {
       // 如果传入的是日期字符串（YYYY-MM-DD），转换为 Date
       if (
         typeof data.due_end_date === 'string' &&
         data.due_end_date.match(/^\d{4}-\d{2}-\d{2}$/)
       ) {
-        // 解析日期字符串，设置为当天的 00:00:00（Date 类型，不包含时间）
+        // 使用 UTC 时间创建日期，确保日期部分不会因时区转换而改变
         const [year, month, day] = data.due_end_date.split('-').map(Number);
-        const date = new Date(year, month - 1, day);
-        date.setHours(0, 0, 0, 0);
+        const date = new Date(Date.UTC(year, month - 1, day));
         updateData.due_end_date = date;
       } else if (data.due_end_date instanceof Date) {
-        const date = new Date(data.due_end_date);
-        date.setHours(0, 0, 0, 0);
+        // 转换为 UTC 时间的午夜
+        const date = new Date(
+          Date.UTC(
+            data.due_end_date.getUTCFullYear(),
+            data.due_end_date.getUTCMonth(),
+            data.due_end_date.getUTCDate(),
+          ),
+        );
         updateData.due_end_date = date;
       } else {
         const date = new Date(data.due_end_date);
-        date.setHours(0, 0, 0, 0);
-        updateData.due_end_date = date;
+        if (!isNaN(date.getTime())) {
+          updateData.due_end_date = new Date(
+            Date.UTC(
+              date.getUTCFullYear(),
+              date.getUTCMonth(),
+              date.getUTCDate(),
+            ),
+          );
+        } else {
+          updateData.due_end_date = date;
+        }
       }
     }
 
@@ -140,17 +155,30 @@ export class RepaymentSchedulesController {
         data.due_start_date.match(/^\d{4}-\d{2}-\d{2}$/)
       ) {
         const [year, month, day] = data.due_start_date.split('-').map(Number);
-        const date = new Date(year, month - 1, day);
-        date.setHours(0, 0, 0, 0);
+        const date = new Date(Date.UTC(year, month - 1, day));
         updateData.due_start_date = date;
       } else if (data.due_start_date instanceof Date) {
-        const date = new Date(data.due_start_date);
-        date.setHours(0, 0, 0, 0);
+        const date = new Date(
+          Date.UTC(
+            data.due_start_date.getUTCFullYear(),
+            data.due_start_date.getUTCMonth(),
+            data.due_start_date.getUTCDate(),
+          ),
+        );
         updateData.due_start_date = date;
       } else {
         const date = new Date(data.due_start_date);
-        date.setHours(0, 0, 0, 0);
-        updateData.due_start_date = date;
+        if (!isNaN(date.getTime())) {
+          updateData.due_start_date = new Date(
+            Date.UTC(
+              date.getUTCFullYear(),
+              date.getUTCMonth(),
+              date.getUTCDate(),
+            ),
+          );
+        } else {
+          updateData.due_start_date = date;
+        }
       }
     }
 

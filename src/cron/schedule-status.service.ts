@@ -13,20 +13,25 @@ export class ScheduleStatusService {
   @Cron('0 6 * * *')
   async updateRepaymentScheduleStatuses() {
     const now = new Date();
+    // 获取今天的开始时间（00:00:00）用于日期比较
+    const todayStart = new Date(now);
+    todayStart.setHours(0, 0, 0, 0);
+
     // 激活：已到达开始时间且未到结束时间
+    // 对于 Date 类型，比较时使用当天的开始时间
     await this.prisma.repaymentSchedule.updateMany({
       where: {
         due_start_date: { lte: now },
-        due_end_date: { gt: now },
+        due_end_date: { gte: todayStart }, // 使用 >= 今天的开始时间来判断未过期
         status: { in: ['pending', 'active'] },
       },
       data: { status: 'active' as RepaymentScheduleStatus },
     });
 
-    // 逾期：超过结束时间未支付
+    // 逾期：超过结束日期未支付（due_end_date < 今天的开始时间）
     await this.prisma.repaymentSchedule.updateMany({
       where: {
-        due_end_date: { lte: now },
+        due_end_date: { lt: todayStart }, // 使用 < 今天的开始时间来判断已过期
         status: { in: ['pending', 'active'] },
       },
       data: { status: 'overdue' as RepaymentScheduleStatus },

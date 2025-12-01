@@ -40,11 +40,23 @@ export class LoanAccountsService {
     } = data;
 
     // 设置时间
-    const startDate = new Date(due_start_date);
-    const endDate = new Date(data.due_end_date);
-    // 账户级别开始/结束时间：当天00:00:00 至 当天23:59:59.999
-    startDate.setHours(0, 0, 0, 0);
-    endDate.setHours(23, 59, 59, 999);
+    // 解析日期字符串（YYYY-MM-DD 格式）
+    const parseDate = (dateStr: string): Date => {
+      const match = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (match) {
+        const [, year, month, day] = match;
+        const date = new Date(Number(year), Number(month) - 1, Number(day));
+        date.setHours(0, 0, 0, 0);
+        return date;
+      }
+      // 如果格式不匹配，尝试直接解析
+      const date = new Date(dateStr);
+      date.setHours(0, 0, 0, 0);
+      return date;
+    };
+
+    const startDate = parseDate(due_start_date);
+    const endDate = parseDate(data.due_end_date);
 
     // 使用事务：创建贷款记录并批量创建还款计划
     const loan = await this.prisma.$transaction(async (tx) => {
@@ -86,13 +98,14 @@ export class LoanAccountsService {
       // 生成还款计划：最后一期本金为剩余本金；应还金额 = 本金 + 利息
       let remainingPrincipal = Number(data.loan_amount) || 0; // 假定 loan_amount 为总本金
       const rows = Array.from({ length: periods }).map((_, idx) => {
+        // 计算每期的开始日期：第一期使用 due_start_date，后续每期依次往后延
         const d = new Date(created.due_start_date);
         d.setDate(d.getDate() + idx);
-        // 当天 00:00:00 开始
+        // 当天 00:00:00 开始（Date 类型，不包含时间）
         d.setHours(0, 0, 0, 0);
-        // 当天 23:59:59.999 截止
+        // 结束日期：当天（Date 类型，不包含时间）
         const end = new Date(d);
-        end.setHours(23, 59, 59, 999);
+        end.setHours(0, 0, 0, 0);
 
         // 计算本期本金：前 n-1 期使用固定每期本金，最后一期取剩余本金
         let curCapital = 0;
@@ -343,101 +356,177 @@ export class LoanAccountsService {
   }
 
   async update(id: string, data: UpdateLoanAccountDto): Promise<LoanAccount> {
-    const updateData: any = {};
+    return await this.prisma.$transaction(async (tx) => {
+      // 获取更新前的数据，用于判断 due_start_date 是否改变
+      const oldLoan = await tx.loanAccount.findUnique({
+        where: { id },
+        select: { due_start_date: true },
+      });
 
-    // 处理日期字段
-    if (data.due_start_date) {
-      const startDate = new Date(data.due_start_date);
-      startDate.setHours(0, 0, 0, 0);
-      updateData.due_start_date = startDate;
-    }
+      if (!oldLoan) {
+        throw new Error('贷款记录不存在');
+      }
 
-    if (data.due_end_date) {
-      const endDate = new Date(data.due_end_date);
-      endDate.setHours(23, 59, 59, 999);
-      updateData.due_end_date = endDate;
-    }
+      const updateData: any = {};
+      let newDueStartDate: Date | null = null;
 
-    // 处理数值字段
-    if (data.loan_amount !== undefined)
-      updateData.loan_amount = data.loan_amount;
-    if (data.receiving_amount !== undefined)
-      updateData.receiving_amount = data.receiving_amount;
-    if (data.to_hand_ratio !== undefined)
-      updateData.to_hand_ratio = data.to_hand_ratio;
-    if (data.capital !== undefined) updateData.capital = data.capital;
-    if (data.interest !== undefined) updateData.interest = data.interest;
-    if (data.handling_fee !== undefined)
-      updateData.handling_fee = data.handling_fee;
-    if (data.total_periods !== undefined)
-      updateData.total_periods = data.total_periods;
-    if (data.repaid_periods !== undefined)
-      updateData.repaid_periods = data.repaid_periods;
-    if (data.daily_repayment !== undefined)
-      updateData.daily_repayment = data.daily_repayment;
-    if (data.status !== undefined)
-      updateData.status = data.status as LoanAccountStatus;
-    if (data.company_cost !== undefined)
-      updateData.company_cost = data.company_cost;
-    if (data.apply_times !== undefined)
-      updateData.apply_times = data.apply_times;
+      // 处理日期字段（日期类型，不包含时间）
+      if (data.due_start_date) {
+        // 解析 YYYY-MM-DD 格式的日期字符串
+        const dateMatch = data.due_start_date.match(
+          /^(\d{4})-(\d{2})-(\d{2})$/,
+        );
+        if (dateMatch) {
+          const [, year, month, day] = dateMatch;
+          const startDate = new Date(
+            Number(year),
+            Number(month) - 1,
+            Number(day),
+          );
+          startDate.setHours(0, 0, 0, 0);
+          updateData.due_start_date = startDate;
+          newDueStartDate = startDate;
+        }
+      }
 
-    // 处理管理员ID字段
-    if (data.risk_controller_id !== undefined) {
-      updateData.risk_controller_id = data.risk_controller_id;
-    }
-    if (data.collector_id !== undefined) {
-      updateData.collector_id = data.collector_id;
-    }
-    if (data.payee_id !== undefined) {
-      updateData.payee_id = data.payee_id;
-    }
-    if (data.lender_id !== undefined) {
-      updateData.lender_id = data.lender_id;
-    }
+      if (data.due_end_date) {
+        // 解析 YYYY-MM-DD 格式的日期字符串
+        const dateMatch = data.due_end_date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (dateMatch) {
+          const [, year, month, day] = dateMatch;
+          const endDate = new Date(
+            Number(year),
+            Number(month) - 1,
+            Number(day),
+          );
+          endDate.setHours(0, 0, 0, 0);
+          updateData.due_end_date = endDate;
+        }
+      }
 
-    // 更新 LoanAccount
-    const updated = await this.prisma.loanAccount.update({
-      where: { id },
-      data: updateData,
-      include: {
-        user: true,
-        repaymentSchedules: true,
-        risk_controller: {
-          select: {
-            id: true,
-            username: true,
+      // 处理数值字段
+      if (data.loan_amount !== undefined)
+        updateData.loan_amount = data.loan_amount;
+      if (data.receiving_amount !== undefined)
+        updateData.receiving_amount = data.receiving_amount;
+      if (data.to_hand_ratio !== undefined)
+        updateData.to_hand_ratio = data.to_hand_ratio;
+      if (data.capital !== undefined) updateData.capital = data.capital;
+      if (data.interest !== undefined) updateData.interest = data.interest;
+      if (data.handling_fee !== undefined)
+        updateData.handling_fee = data.handling_fee;
+      if (data.total_periods !== undefined)
+        updateData.total_periods = data.total_periods;
+      if (data.repaid_periods !== undefined)
+        updateData.repaid_periods = data.repaid_periods;
+      if (data.daily_repayment !== undefined)
+        updateData.daily_repayment = data.daily_repayment;
+      if (data.status !== undefined)
+        updateData.status = data.status as LoanAccountStatus;
+      if (data.company_cost !== undefined)
+        updateData.company_cost = data.company_cost;
+      if (data.apply_times !== undefined)
+        updateData.apply_times = data.apply_times;
+
+      // 处理管理员ID字段
+      if (data.risk_controller_id !== undefined) {
+        updateData.risk_controller_id = data.risk_controller_id;
+      }
+      if (data.collector_id !== undefined) {
+        updateData.collector_id = data.collector_id;
+      }
+      if (data.payee_id !== undefined) {
+        updateData.payee_id = data.payee_id;
+      }
+      if (data.lender_id !== undefined) {
+        updateData.lender_id = data.lender_id;
+      }
+
+      // 更新 LoanAccount
+      const updated = await tx.loanAccount.update({
+        where: { id },
+        data: updateData,
+        include: {
+          user: true,
+          repaymentSchedules: true,
+          risk_controller: {
+            select: {
+              id: true,
+              username: true,
+            },
+          },
+          collector: {
+            select: {
+              id: true,
+              username: true,
+            },
+          },
+          payee: {
+            select: {
+              id: true,
+              username: true,
+            },
+          },
+          lender: {
+            select: {
+              id: true,
+              username: true,
+            },
           },
         },
-        collector: {
-          select: {
-            id: true,
-            username: true,
-          },
-        },
-        payee: {
-          select: {
-            id: true,
-            username: true,
-          },
-        },
-        lender: {
-          select: {
-            id: true,
-            username: true,
-          },
-        },
-      },
-    });
+      });
 
-    // 如果更新了管理员ID，需要同步更新 LoanAccountRole
-    if (
-      data.risk_controller_id !== undefined ||
-      data.collector_id !== undefined ||
-      data.payee_id !== undefined ||
-      data.lender_id !== undefined
-    ) {
-      await this.prisma.$transaction(async (tx) => {
+      // 如果 due_start_date 改变了，同步更新所有相关的 RepaymentSchedule
+      if (newDueStartDate && oldLoan.due_start_date) {
+        const oldStartDate = new Date(oldLoan.due_start_date);
+        oldStartDate.setHours(0, 0, 0, 0);
+
+        // 比较日期（只比较年月日，忽略时间）
+        const oldDateStr = oldStartDate.toISOString().split('T')[0];
+        const newDateStr = newDueStartDate.toISOString().split('T')[0];
+
+        if (oldDateStr !== newDateStr) {
+          // 获取所有相关的还款计划，按 period 排序
+          const schedules = await tx.repaymentSchedule.findMany({
+            where: { loan_id: id },
+            orderBy: { period: 'asc' },
+            select: { id: true, period: true },
+          });
+
+          // 更新每个还款计划的日期
+          for (const schedule of schedules) {
+            // 计算新的开始日期：第一期使用新的 due_start_date，后续每期依次往后延
+            // 第一期：period = 1，所以加 0 天
+            // 第二期：period = 2，所以加 1 天
+            // 第三期：period = 3，所以加 2 天
+            const newStartDate = new Date(newDueStartDate);
+            newStartDate.setDate(
+              newStartDate.getDate() + (schedule.period - 1),
+            );
+            newStartDate.setHours(0, 0, 0, 0);
+
+            // 计算新的结束日期：当天（Date 类型，不包含时间）
+            const newEndDate = new Date(newStartDate);
+            newEndDate.setHours(0, 0, 0, 0);
+
+            await tx.repaymentSchedule.update({
+              where: { id: schedule.id },
+              data: {
+                due_start_date: newStartDate,
+                due_end_date: newEndDate,
+              },
+            });
+          }
+        }
+      }
+
+      // 如果更新了管理员ID，需要同步更新 LoanAccountRole
+      if (
+        data.risk_controller_id !== undefined ||
+        data.collector_id !== undefined ||
+        data.payee_id !== undefined ||
+        data.lender_id !== undefined
+      ) {
         // 删除旧的角色记录
         if (data.risk_controller_id !== undefined) {
           await tx.loanAccountRole.deleteMany({
@@ -502,10 +591,43 @@ export class LoanAccountsService {
             },
           });
         }
-      });
-    }
+      }
 
-    return updated;
+      // 重新获取更新后的数据（包含更新后的还款计划）
+      const finalUpdated = await tx.loanAccount.findUnique({
+        where: { id },
+        include: {
+          user: true,
+          repaymentSchedules: true,
+          risk_controller: {
+            select: {
+              id: true,
+              username: true,
+            },
+          },
+          collector: {
+            select: {
+              id: true,
+              username: true,
+            },
+          },
+          payee: {
+            select: {
+              id: true,
+              username: true,
+            },
+          },
+          lender: {
+            select: {
+              id: true,
+              username: true,
+            },
+          },
+        },
+      });
+
+      return finalUpdated!;
+    });
   }
 
   async updateStatus(

@@ -8,6 +8,7 @@ import {
   UseInterceptors,
   Body,
   Put,
+  Post,
   Query,
   Req,
 } from '@nestjs/common';
@@ -110,23 +111,25 @@ export class RepaymentSchedulesController {
       id: data.id,
     };
 
-    // 处理日期字段：将日期字符串转换为 DateTime
-    // 统一使用 6:00:00 作为时间，与项目其他部分保持一致
+    // 处理日期字段：将日期字符串转换为 Date（不包含时间）
     if (data.due_end_date) {
-      // 如果传入的是日期字符串（YYYY-MM-DD），转换为 DateTime
+      // 如果传入的是日期字符串（YYYY-MM-DD），转换为 Date
       if (
         typeof data.due_end_date === 'string' &&
         data.due_end_date.match(/^\d{4}-\d{2}-\d{2}$/)
       ) {
-        // 解析日期字符串，设置为当天的 6:00:00（与项目其他部分保持一致）
+        // 解析日期字符串，设置为当天的 00:00:00（Date 类型，不包含时间）
         const [year, month, day] = data.due_end_date.split('-').map(Number);
-        const date = new Date(year, month - 1, day, 6, 0, 0, 0);
+        const date = new Date(year, month - 1, day);
+        date.setHours(0, 0, 0, 0);
         updateData.due_end_date = date;
       } else if (data.due_end_date instanceof Date) {
-        updateData.due_end_date = data.due_end_date;
+        const date = new Date(data.due_end_date);
+        date.setHours(0, 0, 0, 0);
+        updateData.due_end_date = date;
       } else {
         const date = new Date(data.due_end_date);
-        date.setHours(6, 0, 0, 0);
+        date.setHours(0, 0, 0, 0);
         updateData.due_end_date = date;
       }
     }
@@ -137,13 +140,16 @@ export class RepaymentSchedulesController {
         data.due_start_date.match(/^\d{4}-\d{2}-\d{2}$/)
       ) {
         const [year, month, day] = data.due_start_date.split('-').map(Number);
-        const date = new Date(year, month - 1, day, 6, 0, 0, 0);
+        const date = new Date(year, month - 1, day);
+        date.setHours(0, 0, 0, 0);
         updateData.due_start_date = date;
       } else if (data.due_start_date instanceof Date) {
-        updateData.due_start_date = data.due_start_date;
+        const date = new Date(data.due_start_date);
+        date.setHours(0, 0, 0, 0);
+        updateData.due_start_date = date;
       } else {
         const date = new Date(data.due_start_date);
-        date.setHours(6, 0, 0, 0);
+        date.setHours(0, 0, 0, 0);
         updateData.due_start_date = date;
       }
     }
@@ -213,5 +219,62 @@ export class RepaymentSchedulesController {
     };
 
     return ResponseHelper.success(responseData, '更新还款计划成功');
+  }
+
+  @Post(':id/reset')
+  @Roles(ManagementRoles.管理员, ManagementRoles.负责人)
+  async resetSchedule(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() request: any,
+    @CurrentUser() user: { id: number; role: string },
+  ): Promise<ApiResponseDto> {
+    // 获取恢复前的完整数据（用于操作日志）
+    const oldSchedule = await this.repaymentSchedulesService.findById(id);
+    if (!oldSchedule) {
+      throw new NotFoundException('还款计划不存在');
+    }
+
+    // 将恢复前的完整数据存储到 request 对象，供拦截器使用
+    request.oldData = JSON.parse(
+      JSON.stringify({
+        id: oldSchedule.id,
+        loan_id: oldSchedule.loan_id,
+        period: oldSchedule.period,
+        due_start_date: oldSchedule.due_start_date,
+        due_end_date: oldSchedule.due_end_date,
+        due_amount: oldSchedule.due_amount,
+        capital: oldSchedule.capital,
+        interest: oldSchedule.interest,
+        paid_capital: oldSchedule.paid_capital,
+        paid_interest: oldSchedule.paid_interest,
+        fines: oldSchedule.fines,
+        status: oldSchedule.status,
+        paid_amount: oldSchedule.paid_amount,
+        paid_at: oldSchedule.paid_at,
+      }),
+    );
+
+    const resetSchedule =
+      await this.repaymentSchedulesService.resetSchedule(id);
+
+    // 返回恢复后的数据
+    const responseData = {
+      id: resetSchedule.id,
+      loan_id: resetSchedule.loan_id,
+      period: resetSchedule.period,
+      due_start_date: resetSchedule.due_start_date,
+      due_end_date: resetSchedule.due_end_date,
+      due_amount: resetSchedule.due_amount,
+      capital: resetSchedule.capital,
+      interest: resetSchedule.interest,
+      paid_capital: resetSchedule.paid_capital,
+      paid_interest: resetSchedule.paid_interest,
+      fines: resetSchedule.fines,
+      status: resetSchedule.status,
+      paid_amount: resetSchedule.paid_amount,
+      paid_at: resetSchedule.paid_at,
+    };
+
+    return ResponseHelper.success(responseData, '恢复还款计划成功');
   }
 }

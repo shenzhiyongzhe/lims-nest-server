@@ -1106,10 +1106,12 @@ export class StatisticsService {
 
     // 逾期统计：查询所有 due_end_date 超过当前时间且未完全支付的记录
     // 注意：这里使用前面定义的 now 变量
+    const todayStart = new Date(now);
+    todayStart.setHours(0, 0, 0, 0);
     const overdueSchedules = await this.prisma.repaymentSchedule.findMany({
       where: {
         loan_id: { in: loanAccountIds },
-        due_end_date: { lt: now }, // 截止日期已过
+        due_end_date: { lt: todayStart }, // 截止日期已过（使用今天的开始时间比较）
       },
       select: {
         id: true,
@@ -1170,147 +1172,5 @@ export class StatisticsService {
         created_at: account.created_at,
       })),
     };
-  }
-
-  async getAdminOverview() {
-    // --- Today's Date Range (Local Time) ---
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-    const todayEnd = new Date();
-    todayEnd.setHours(23, 59, 59, 999);
-
-    // --- 1. Total Stats Calculation ---
-    const allLoanAccounts = await this.prisma.loanAccount.findMany();
-
-    const totalReceivingAmount = allLoanAccounts.reduce(
-      (sum, acc) => sum + Number(acc.receiving_amount || 0),
-      0,
-    );
-    const totalCompanyCost = allLoanAccounts.reduce(
-      (sum, acc) => sum + Number(acc.company_cost || 0),
-      0,
-    );
-    const totalHandlingFee = allLoanAccounts.reduce(
-      (sum, acc) => sum + Number(acc.handling_fee),
-      0,
-    );
-    const totalFines = allLoanAccounts.reduce(
-      (sum, acc) => sum + Number(acc.total_fines),
-      0,
-    );
-
-    const inStockAccounts = allLoanAccounts.filter(
-      (acc) => acc.status === 'pending' || acc.status === 'active',
-    );
-    const inStockCount = inStockAccounts.length;
-    const inStockAmount = inStockAccounts.reduce(
-      (sum, acc) => sum + Number(acc.loan_amount),
-      0,
-    );
-    const totalUnpaidCapital = inStockAccounts.reduce(
-      (sum, acc) => sum + (Number(acc.loan_amount) - Number(acc.paid_capital)),
-      0,
-    );
-
-    const negotiatedCount = allLoanAccounts.filter(
-      (acc) => acc.status === 'negotiated',
-    ).length;
-    const blacklistCount = allLoanAccounts.filter(
-      (acc) => acc.status === 'blacklist',
-    ).length;
-
-    const totalStats = {
-      totalAmount: totalReceivingAmount - totalCompanyCost,
-      inStockCount,
-      inStockAmount,
-      totalReceivingAmount,
-      totalUnpaidCapital,
-      totalHandlingFee,
-      totalFines,
-      negotiatedCount,
-      blacklistCount,
-    };
-
-    // --- 2. Today's Stats Calculation ---
-    const newInStockToday = await this.prisma.loanAccount.aggregate({
-      where: {
-        created_at: {
-          gte: todayStart,
-          lte: todayEnd,
-        },
-      },
-      _sum: {
-        loan_amount: true,
-        handling_fee: true,
-      },
-    });
-
-    const settledLoanSchedules = await this.prisma.repaymentSchedule.findMany({
-      where: {
-        loan_account: {
-          status: 'settled',
-        },
-        paid_at: {
-          gte: todayStart,
-          lte: todayEnd,
-        },
-      },
-      select: {
-        loan_id: true,
-        period: true,
-        loan_account: {
-          select: {
-            total_periods: true,
-            loan_amount: true,
-          },
-        },
-      },
-    });
-
-    const lastPeriods = new Map<string, number>();
-    settledLoanSchedules.forEach((s) => {
-      const maxPeriod = Math.max(lastPeriods.get(s.loan_id) || 0, s.period);
-      lastPeriods.set(s.loan_id, maxPeriod);
-    });
-
-    const clearedOffAmount = settledLoanSchedules
-      .filter(
-        (s) =>
-          s.period === s.loan_account.total_periods &&
-          lastPeriods.get(s.loan_id) === s.period,
-      )
-      .reduce((sum, s) => sum + Number(s.loan_account.loan_amount), 0);
-
-    const todaySchedules = await this.prisma.repaymentSchedule.findMany({
-      where: {
-        due_end_date: {
-          gte: todayStart,
-          lte: todayEnd,
-        },
-      },
-      select: {
-        capital: true,
-        paid_capital: true,
-      },
-    });
-
-    const todayPaidCapital = todaySchedules.reduce(
-      (sum, s) => sum + Number(s.paid_capital || 0),
-      0,
-    );
-    const todayUnpaidCapital = todaySchedules.reduce(
-      (sum, s) => sum + (Number(s.capital || 0) - Number(s.paid_capital || 0)),
-      0,
-    );
-
-    const todayStats = {
-      newInStockAmount: newInStockToday._sum.loan_amount || 0,
-      clearedOffAmount,
-      todayPaidCapital,
-      todayUnpaidCapital,
-      todayHandlingFee: newInStockToday._sum.handling_fee || 0,
-    };
-
-    return { totalStats, todayStats };
   }
 }

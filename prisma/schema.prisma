@@ -87,8 +87,8 @@ model LoanAccount {
   to_hand_ratio      Decimal?          @db.Decimal(10, 2)
   capital            Decimal           @db.Decimal(10, 2)
   interest           Decimal           @db.Decimal(10, 2)
-  due_start_date     DateTime
-  due_end_date       DateTime
+  due_start_date     DateTime @db.Date
+  due_end_date       DateTime @db.Date
   apply_times        Int               @default(0)
   status             LoanAccountStatus @default(pending)
   handling_fee       Decimal           @db.Decimal(10, 2)
@@ -136,8 +136,8 @@ model RepaymentSchedule {
   id                  Int                     @id @default(autoincrement())
   loan_id             String
   period              Int
-  due_start_date      DateTime
-  due_end_date        DateTime
+  due_start_date      DateTime @db.Date
+  due_end_date        DateTime @db.Date
   due_amount          Decimal                 @db.Decimal(10, 2)
   capital             Decimal?                @db.Decimal(10, 2)
   interest            Decimal?                @db.Decimal(10, 2)

@@ -305,6 +305,143 @@ export class RepaymentSchedulesService {
     });
   }
 
+  /**
+   * 恢复还款计划到初始状态
+   * 删除相关的订单和还款记录，清零已还本金、已还利息、罚金，恢复到待还款状态
+   */
+  async resetSchedule(scheduleId: number): Promise<RepaymentSchedule> {
+    return await this.prisma.$transaction(async (tx) => {
+      // 1. 获取还款计划信息
+      const schedule = await tx.repaymentSchedule.findUnique({
+        where: { id: scheduleId },
+        select: {
+          id: true,
+          loan_id: true,
+          capital: true,
+          interest: true,
+        },
+      });
+
+      if (!schedule) {
+        throw new NotFoundException('还款计划不存在');
+      }
+
+      // 2. 查找所有关联的还款记录
+      const repaymentRecords = await tx.repaymentRecord.findMany({
+        where: {
+          repayment_schedule_id: scheduleId,
+        },
+        select: {
+          id: true,
+          order_id: true,
+        },
+      });
+
+      // 3. 收集所有关联的订单ID（去重）
+      const orderIds = [...new Set(repaymentRecords.map((r) => r.order_id))];
+
+      // 4. 删除还款记录
+      if (repaymentRecords.length > 0) {
+        await tx.repaymentRecord.deleteMany({
+          where: {
+            repayment_schedule_id: scheduleId,
+          },
+        });
+      }
+
+      // 5. 删除关联的订单（只删除没有其他还款记录关联的订单）
+      if (orderIds.length > 0) {
+        // 查找这些订单是否还有其他还款记录关联
+        const remainingRecords = await tx.repaymentRecord.findMany({
+          where: {
+            order_id: { in: orderIds },
+          },
+          select: {
+            order_id: true,
+          },
+          distinct: ['order_id'],
+        });
+
+        const remainingOrderIds = new Set(
+          remainingRecords.map((r) => r.order_id),
+        );
+
+        // 只删除没有其他还款记录关联的订单
+        const ordersToDelete = orderIds.filter(
+          (id) => !remainingOrderIds.has(id),
+        );
+
+        if (ordersToDelete.length > 0) {
+          await tx.order.deleteMany({
+            where: {
+              id: { in: ordersToDelete },
+            },
+          });
+        }
+      }
+
+      // 6. 恢复还款计划到初始状态
+      const resetSchedule = await tx.repaymentSchedule.update({
+        where: { id: scheduleId },
+        data: {
+          paid_capital: 0,
+          paid_interest: 0,
+          fines: 0,
+          paid_amount: 0,
+          status: 'pending',
+          paid_at: null,
+          collected_by_type: null,
+          operator_admin_id: null,
+          operator_admin_name: null,
+        },
+      });
+
+      // 7. 重新计算 LoanAccount 的统计数据
+      const allSchedules = await tx.repaymentSchedule.findMany({
+        where: { loan_id: schedule.loan_id },
+        select: {
+          paid_capital: true,
+          paid_interest: true,
+          fines: true,
+          status: true,
+        },
+      });
+
+      const totalReceiving = allSchedules.reduce(
+        (sum, s) =>
+          sum +
+          Number(s.paid_capital || 0) +
+          Number(s.paid_interest || 0) +
+          Number(s.fines || 0),
+        0,
+      );
+      const loanPaidCapital = allSchedules.reduce(
+        (sum, s) => sum + Number(s.paid_capital || 0),
+        0,
+      );
+      const totalFines = allSchedules.reduce(
+        (sum, s) => sum + Number(s.fines || 0),
+        0,
+      );
+      const repaidPeriods = allSchedules.filter(
+        (s) => s.status === 'paid',
+      ).length;
+
+      // 8. 更新 LoanAccount
+      await tx.loanAccount.update({
+        where: { id: schedule.loan_id },
+        data: {
+          receiving_amount: totalReceiving,
+          paid_capital: loanPaidCapital,
+          repaid_periods: repaidPeriods,
+          total_fines: totalFines,
+        },
+      });
+
+      return resetSchedule;
+    });
+  }
+
   async delete(data: RepaymentSchedule): Promise<RepaymentSchedule> {
     return this.prisma.repaymentSchedule.delete({
       where: { id: data.id },
@@ -326,8 +463,10 @@ export class RepaymentSchedulesService {
 
     // 如果查询逾期记录，使用和统计逻辑一致的查询方式
     if (status === 'overdue') {
-      // 逾期：due_end_date < 当前时间 且 未完全支付
-      whereClause.due_end_date = { lt: now };
+      // 逾期：due_end_date < 今天的开始时间 且 未完全支付
+      const todayStart = new Date(now);
+      todayStart.setHours(0, 0, 0, 0);
+      whereClause.due_end_date = { lt: todayStart };
 
       // 如果有adminId，需要过滤该collector负责的loan accounts
       if (adminId) {

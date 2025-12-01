@@ -186,6 +186,16 @@ export class RepaymentSchedulesService {
       const currPaid = Number(updatedSchedule.paid_amount || 0);
       const incPaid = Math.max(0, currPaid - prevPaid);
 
+      // 计算本金、利息、罚金的增量
+
+      const prevFines = toNumber(currentSchedule.fines);
+      const currPaidCapital = toNumber(updatedSchedule.paid_capital);
+      const currPaidInterest = toNumber(updatedSchedule.paid_interest);
+      const currFines = toNumber(updatedSchedule.fines);
+      const incPaidCapital = Math.max(0, currPaidCapital - prevPaidCapital);
+      const incPaidInterest = Math.max(0, currPaidInterest - prevPaidInterest);
+      const incPaidFines = Math.max(0, currFines - prevFines);
+
       if (incPaid > 0) {
         // 获取 LoanAccount 与 Payee 信息
         const loan = await tx.loanAccount.findUnique({
@@ -241,6 +251,10 @@ export class RepaymentSchedulesService {
             collected_by_type: 'manual',
             operator_admin_id: operatorAdminId ?? null,
             operator_admin_name: operatorName ?? null,
+            paid_capital: incPaidCapital > 0 ? incPaidCapital : null,
+            paid_interest: incPaidInterest > 0 ? incPaidInterest : null,
+            paid_fines: incPaidFines > 0 ? incPaidFines : null,
+            repayment_schedule_id: updatedSchedule.id,
           },
         });
       }

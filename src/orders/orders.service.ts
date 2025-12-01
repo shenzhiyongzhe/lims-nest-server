@@ -138,21 +138,7 @@ export class OrdersService {
       const paidAt = new Date();
       const paidAtStr = paidAt.toISOString();
 
-      // 1. 创建还款记录
-      await tx.repaymentRecord.create({
-        data: {
-          loan_id: order.loan_id,
-          user_id: order.customer_id,
-          paid_amount: paidAmount,
-          paid_at: paidAtStr,
-          payment_method: order.payment_method,
-          payee_id: order.payee_id ?? 0,
-          remark: order.remark ?? null,
-          order_id: order.id,
-        },
-      });
-
-      // 2. 更新还款计划：找到最早的未还清计划，分配金额
+      // 1. 获取还款计划：找到最早的未还清计划，分配金额
       const schedules = await tx.repaymentSchedule.findMany({
         where: {
           loan_id: order.loan_id,
@@ -163,9 +149,28 @@ export class OrdersService {
         orderBy: {
           due_start_date: 'asc',
         },
+        select: {
+          id: true,
+          capital: true,
+          interest: true,
+          fines: true,
+          paid_capital: true,
+          paid_interest: true,
+          paid_amount: true,
+          due_amount: true,
+        },
       });
 
       let remainingAmount = paidAmount;
+      const scheduleUpdates: Array<{
+        id: number;
+        paidCapital: number;
+        paidInterest: number;
+        paidFines: number;
+        paidAmount: number;
+        status: 'paid' | 'active' | 'pending';
+      }> = [];
+
       for (const schedule of schedules) {
         if (remainingAmount <= 0) break;
 
@@ -174,28 +179,121 @@ export class OrdersService {
         const scheduleRemaining = dueAmount - currentPaid;
 
         if (scheduleRemaining > 0) {
+          const capital = Number(schedule.capital || 0);
+          const interest = Number(schedule.interest || 0);
+          const fines = Number(schedule.fines || 0);
+          const currentPaidCapital = Number(schedule.paid_capital || 0);
+          const currentPaidInterest = Number(schedule.paid_interest || 0);
+
+          // 计算这个计划还需要还的本金、利息、罚金
+          const remainingCapital = Math.max(0, capital - currentPaidCapital);
+          const remainingInterest = Math.max(0, interest - currentPaidInterest);
+          const remainingFines = fines; // 罚金通常是一次性添加的
+
+          // 计算这个计划的总剩余金额
+          const totalRemaining =
+            remainingCapital + remainingInterest + remainingFines;
+
           if (remainingAmount >= scheduleRemaining) {
             // 完全还清这个计划
-            await tx.repaymentSchedule.update({
-              where: { id: schedule.id },
-              data: {
-                paid_amount: dueAmount,
-                status: 'paid',
-                paid_at: paidAt,
-              },
+            const paidCapital = remainingCapital;
+            const paidInterest = remainingInterest;
+            const paidFines = remainingFines;
+
+            scheduleUpdates.push({
+              id: schedule.id,
+              paidCapital: currentPaidCapital + paidCapital,
+              paidInterest: currentPaidInterest + paidInterest,
+              paidFines: paidFines,
+              paidAmount: dueAmount,
+              status: 'paid',
             });
+
             remainingAmount -= scheduleRemaining;
           } else {
             // 部分还清这个计划
-            await tx.repaymentSchedule.update({
-              where: { id: schedule.id },
-              data: {
-                paid_amount: currentPaid + remainingAmount,
-                // 保持当前状态（pending 或 active）
-              },
+            // 按比例分配：先还罚金，再还利息，最后还本金
+            let allocatedCapital = 0;
+            let allocatedInterest = 0;
+            let allocatedFines = 0;
+            let tempRemaining = remainingAmount;
+
+            // 先还罚金
+            if (tempRemaining > 0 && remainingFines > 0) {
+              allocatedFines = Math.min(tempRemaining, remainingFines);
+              tempRemaining -= allocatedFines;
+            }
+
+            // 再还利息
+            if (tempRemaining > 0 && remainingInterest > 0) {
+              allocatedInterest = Math.min(tempRemaining, remainingInterest);
+              tempRemaining -= allocatedInterest;
+            }
+
+            // 最后还本金
+            if (tempRemaining > 0 && remainingCapital > 0) {
+              allocatedCapital = Math.min(tempRemaining, remainingCapital);
+            }
+
+            scheduleUpdates.push({
+              id: schedule.id,
+              paidCapital: currentPaidCapital + allocatedCapital,
+              paidInterest: currentPaidInterest + allocatedInterest,
+              paidFines: allocatedFines,
+              paidAmount: currentPaid + remainingAmount,
+              status: 'active' as 'active' | 'pending',
             });
+
             remainingAmount = 0;
           }
+        }
+      }
+
+      // 2. 更新还款计划并为每个计划创建RepaymentRecord
+      for (const update of scheduleUpdates) {
+        const schedule = schedules.find((s) => s.id === update.id)!;
+        const prevPaidCapital = Number(schedule.paid_capital || 0);
+        const prevPaidInterest = Number(schedule.paid_interest || 0);
+        const prevPaidFines = Number(schedule.fines || 0);
+
+        // 计算本次新增的本金、利息、罚金
+        const incPaidCapital = update.paidCapital - prevPaidCapital;
+        const incPaidInterest = update.paidInterest - prevPaidInterest;
+        const incPaidFines = update.paidFines - prevPaidFines;
+        const incPaidAmount =
+          update.paidAmount - Number(schedule.paid_amount || 0);
+
+        // 更新还款计划
+        await tx.repaymentSchedule.update({
+          where: { id: update.id },
+          data: {
+            paid_capital: update.paidCapital,
+            paid_interest: update.paidInterest,
+            fines: update.paidFines,
+            paid_amount: update.paidAmount,
+            status: update.status,
+            paid_at: update.status === 'paid' ? paidAt : null,
+          },
+        });
+
+        // 为每个计划创建RepaymentRecord（只有当有新增金额时）
+        if (incPaidAmount > 0) {
+          await tx.repaymentRecord.create({
+            data: {
+              loan_id: order.loan_id,
+              user_id: order.customer_id,
+              paid_amount: incPaidAmount,
+              paid_at: paidAtStr,
+              payment_method: order.payment_method,
+              payee_id: order.payee_id ?? 0,
+              remark: order.remark ?? null,
+              order_id: order.id,
+              paid_capital: incPaidCapital > 0 ? incPaidCapital : null,
+              paid_interest: incPaidInterest > 0 ? incPaidInterest : null,
+              paid_fines: incPaidFines > 0 ? incPaidFines : null,
+              repayment_schedule_id: update.id,
+            },
+          });
         }
       }
 

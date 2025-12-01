@@ -70,6 +70,14 @@ export class StatisticsController {
     return ResponseHelper.success(statistics, '统计数据获取成功');
   }
 
+  @Get('admin/overview')
+  @UseGuards(RolesGuard)
+  @Roles(ManagementRoles.管理员)
+  async getAdminOverview() {
+    const overview = await this.statisticsService.getAdminOverview();
+    return ResponseHelper.success(overview, '获取管理员总览统计成功');
+  }
+
   @Get('admin')
   @UseGuards(RolesGuard)
   @Roles(ManagementRoles.管理员)
@@ -78,6 +86,14 @@ export class StatisticsController {
     // 如果数据不存在，会自动创建默认统计记录
     const statistics = await this.statisticsService.getAdminStatistics();
     return ResponseHelper.success(statistics, '管理员统计数据获取成功');
+  }
+
+  @Get('admin/today')
+  @UseGuards(RolesGuard)
+  @Roles(ManagementRoles.管理员)
+  async getTodayAdminStatistics() {
+    const statistics = await this.statisticsService.getTodayAdminStatistics();
+    return ResponseHelper.success(statistics, '今日管理员统计数据获取成功');
   }
 
   @Get('collector-report')

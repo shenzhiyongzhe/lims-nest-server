@@ -619,14 +619,15 @@ export class LoanAccountsService {
 
         // 更新贷款账户
         const totalPeriods = loan.total_periods || schedules.length;
+        const updateData: any = {
+          status: newStatus,
+          repaid_periods: totalPeriods,
+          // 重新计算 receiving_amount（包含罚金）
+          receiving_amount: receivingAmount,
+        };
         const updated = await tx.loanAccount.update({
           where: { id },
-          data: {
-            status: newStatus,
-            repaid_periods: totalPeriods,
-            // 重新计算 receiving_amount（包含罚金）
-            receiving_amount: receivingAmount,
-          },
+          data: updateData,
           include: {
             user: true,
             repaymentSchedules: {
@@ -667,11 +668,16 @@ export class LoanAccountsService {
       return updated;
     } else {
       // 对于其他状态，直接更新
+      const updateData: any = {
+        status: newStatus,
+      };
+      // 如果状态变更为negotiated或blacklist，更新status_changed_at
+      if (newStatus === 'negotiated' || newStatus === 'blacklist') {
+        updateData.status_changed_at = new Date();
+      }
       const updated = await this.prisma.loanAccount.update({
         where: { id },
-        data: {
-          status: newStatus,
-        },
+        data: updateData,
         include: {
           user: true,
           repaymentSchedules: {

@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+
 @Injectable()
 export class StatisticsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -434,39 +435,279 @@ export class StatisticsService {
     };
   }
 
-  // 获取管理员统计数据：按collector和risk_controller分组统计receiving_amount
   async getAdminStatistics(): Promise<any[]> {
-    // 使用业务日期：6点后算当天，6点前算前一天
-    const businessDate = this.getBusinessDate();
+    const roles = await this.prisma.loanAccountRole.findMany({
+      where: {
+        role_type: { in: ['collector', 'risk_controller'] },
+      },
+      include: {
+        admin: true,
+        loan_account: true,
+      },
+    });
 
-    // 将日期转换为 YYYY-MM-DD 格式字符串，避免时区问题
-    const dateStr = businessDate.toISOString().split('T')[0];
+    // 按 admin_id + role_type 分组（同一个admin可能同时是collector和risk_controller）
+    const adminStats = new Map<string, any>();
 
-    console.log(`🔍 查询统计数据:`);
-    console.log(`  - businessDate: ${businessDate.toISOString()}`);
-    console.log(`  - dateStr: ${dateStr}`);
-
-    // 直接调用 calculateDailyStatistics 获取计算结果，不再重新查询
-    const calculatedStats = await this.calculateDailyStatistics(
-      new Date(businessDate),
-    );
-
-    console.log(
-      `✅ 统计数据计算完成: calculatedStats.length=${calculatedStats.length}`,
-    );
-
-    // 如果计算结果为空，直接返回空数组（说明没有 loanAccounts）
-    if (calculatedStats.length === 0) {
-      console.log(`⚠️ 没有统计数据，返回空数组`);
-      return [];
+    for (const role of roles) {
+      const key = `${role.admin_id}_${role.role_type}`;
+      if (!adminStats.has(key)) {
+        adminStats.set(key, {
+          admin_id: role.admin_id,
+          admin_name: role.admin.username,
+          role: role.role_type, // 使用role_type而不是admin.role
+          totalAmount: 0, // 总金额 = Σ(receiving_amount) − Σ(company_cost)
+          inStockCount: 0, // 在库人数 = 状态 in [pending, active] 的 LoanAccount 数量
+          inStockAmount: 0, // 在库金额 = 状态 in [pending, active] 的 Σ(loan_amount)
+          totalReceivingAmount: 0, // 已收金额 = Σ(receiving_amount)（包含罚金）
+          totalUnpaidCapital: 0, // 未收本金 = 状态 in [pending, active] 的 Σ(loan_amount − paid_capital)
+          totalHandlingFee: 0, // 后扣 = Σ(handling_fee)
+          totalFines: 0, // 罚金 = Σ(total_fines)
+          negotiatedCount: 0, // 协商 = 状态 negotiated 的数量
+          blacklistCount: 0, // 黑名单 = 状态 blacklist 的数量
+          loanAccounts: new Set<string>(),
+        });
+      }
+      adminStats.get(key).loanAccounts.add(role.loan_account_id);
     }
 
-    // 按 receiving_amount 降序排序
-    const sortedStats = calculatedStats.sort(
-      (a, b) => b.receiving_amount - a.receiving_amount,
-    );
+    for (const [key, stats] of adminStats.entries()) {
+      const loanAccounts = await this.prisma.loanAccount.findMany({
+        where: { id: { in: Array.from(stats.loanAccounts) } },
+      });
 
-    return sortedStats;
+      for (const acc of loanAccounts) {
+        // 总金额 = Σ(receiving_amount) − Σ(company_cost)
+        stats.totalAmount +=
+          Number(acc.receiving_amount || 0) - Number(acc.company_cost || 0);
+
+        // 已收金额 = Σ(receiving_amount)（包含罚金）
+        stats.totalReceivingAmount += Number(acc.receiving_amount || 0);
+
+        // 后扣 = Σ(handling_fee)
+        stats.totalHandlingFee += Number(acc.handling_fee || 0);
+
+        // 罚金 = Σ(total_fines)
+        stats.totalFines += Number(acc.total_fines || 0);
+
+        // 在库相关统计：状态 in [pending, active]
+        if (acc.status === 'pending' || acc.status === 'active') {
+          // 在库人数
+          stats.inStockCount++;
+          // 在库金额 = 状态 in [pending, active] 的 Σ(loan_amount)
+          stats.inStockAmount += Number(acc.loan_amount);
+          // 未收本金 = 状态 in [pending, active] 的 Σ(loan_amount − paid_capital)
+          stats.totalUnpaidCapital +=
+            Number(acc.loan_amount) - Number(acc.paid_capital || 0);
+        }
+
+        // 协商 = 状态 negotiated 的数量
+        if (acc.status === 'negotiated') {
+          stats.negotiatedCount++;
+        }
+
+        // 黑名单 = 状态 blacklist 的数量
+        if (acc.status === 'blacklist') {
+          stats.blacklistCount++;
+        }
+      }
+      delete stats.loanAccounts; // Clean up
+    }
+
+    return Array.from(adminStats.values());
+  }
+
+  async getTodayAdminStatistics(): Promise<any[]> {
+    // 使用业务日期（6点作为分界点）
+    const businessDayStart = this.getBusinessDayStart();
+    const businessDayEnd = this.getBusinessDayEnd();
+
+    // 获取所有collector和risk_controller角色的loan_account_roles
+    const roles = await this.prisma.loanAccountRole.findMany({
+      where: {
+        role_type: { in: ['collector', 'risk_controller'] },
+      },
+      include: {
+        admin: true,
+        loan_account: true,
+      },
+    });
+
+    // 按 admin_id + role_type 分组
+    const adminStats = new Map<string, any>();
+
+    for (const role of roles) {
+      const key = `${role.admin_id}_${role.role_type}`;
+      if (!adminStats.has(key)) {
+        adminStats.set(key, {
+          admin_id: role.admin_id,
+          admin_name: role.admin.username,
+          role: role.role_type,
+          newInStockAmount: 0, // 新增在库：当天创建的loanAccounts的loan_amount总和
+          clearedOffAmount: 0, // 离库结清：当天RepaymentRecord对应的loanAccount.status=settled的loan_amount总和
+          totalReceived: 0, // 已收：当天RepaymentRecord的paid_capital + paid_interest + paid_fines总和
+          totalUnpaid: 0, // 未收：当天RepaymentSchedule的(due_amount - paid_capital - paid_interest)总和
+          totalHandlingFee: 0, // 后扣：当天新建的loanAccount的handling_fee总和
+          totalFines: 0, // 罚金：当天RepaymentRecord的paid_fines总和
+          negotiatedCount: 0, // 协商：当天status_changed_at不为空且status=negotiated的数量
+          blacklistCount: 0, // 黑名单：当天status_changed_at不为空且status=blacklist的数量
+          loanAccounts: new Set<string>(),
+        });
+      }
+      adminStats.get(key).loanAccounts.add(role.loan_account_id);
+    }
+
+    for (const [key, stats] of adminStats.entries()) {
+      const loanAccountIds: string[] = Array.from(
+        stats.loanAccounts as Set<string>,
+      );
+
+      // 1. 新增在库：当天创建的loanAccounts的loan_amount总和
+      const newLoanAccounts = await this.prisma.loanAccount.findMany({
+        where: {
+          id: { in: loanAccountIds },
+          created_at: {
+            gte: businessDayStart,
+            lt: businessDayEnd,
+          },
+        },
+        select: {
+          loan_amount: true,
+          handling_fee: true,
+        },
+      });
+      stats.newInStockAmount = newLoanAccounts.reduce(
+        (sum, acc) => sum + Number(acc.loan_amount),
+        0,
+      );
+      stats.totalHandlingFee = newLoanAccounts.reduce(
+        (sum, acc) => sum + Number(acc.handling_fee),
+        0,
+      );
+
+      // 2. 离库结清：当天RepaymentRecord对应的loanAccount.status=settled的loan_amount总和
+      // 先找到当天创建的RepaymentRecord，然后检查对应的LoanAccount是否在当天变为settled
+      const todayRepaymentRecords = await this.prisma.repaymentRecord.findMany({
+        where: {
+          loan_id: { in: loanAccountIds },
+          paid_at: {
+            gte: businessDayStart,
+            lt: businessDayEnd,
+          },
+        },
+        select: {
+          loan_id: true,
+        },
+        distinct: ['loan_id'],
+      });
+
+      const todayRepaymentLoanIds = todayRepaymentRecords.map((r) => r.loan_id);
+      if (todayRepaymentLoanIds.length > 0) {
+        const settledLoans = await this.prisma.loanAccount.findMany({
+          where: {
+            id: { in: todayRepaymentLoanIds },
+            status: 'settled',
+            // 检查是否在当天变为settled（通过updated_at判断，因为settled状态会在updateStatus中更新）
+            updated_at: {
+              gte: businessDayStart,
+              lt: businessDayEnd,
+            },
+          },
+          select: {
+            loan_amount: true,
+          },
+        });
+        stats.clearedOffAmount = settledLoans.reduce(
+          (sum, acc) => sum + Number(acc.loan_amount),
+          0,
+        );
+      }
+
+      // 3. 已收：当天RepaymentRecord的paid_capital + paid_interest + paid_fines总和
+      const todayReceivedRecords = await this.prisma.repaymentRecord.findMany({
+        where: {
+          loan_id: { in: loanAccountIds },
+          paid_at: {
+            gte: businessDayStart,
+            lt: businessDayEnd,
+          },
+        },
+        select: {
+          paid_capital: true,
+          paid_interest: true,
+          paid_fines: true,
+        },
+      });
+      stats.totalReceived = todayReceivedRecords.reduce(
+        (sum, record) =>
+          sum +
+          Number(record.paid_capital || 0) +
+          Number(record.paid_interest || 0) +
+          Number(record.paid_fines || 0),
+        0,
+      );
+
+      // 4. 罚金：当天RepaymentRecord的paid_fines总和
+      stats.totalFines = todayReceivedRecords.reduce(
+        (sum, record) => sum + Number(record.paid_fines || 0),
+        0,
+      );
+
+      // 5. 未收：当天RepaymentSchedule的(due_amount - paid_capital - paid_interest)总和
+      // 这里需要找到当天有更新的RepaymentSchedule（通过paid_at判断）
+      const todaySchedules = await this.prisma.repaymentSchedule.findMany({
+        where: {
+          loan_id: { in: loanAccountIds },
+          paid_at: {
+            gte: businessDayStart,
+            lt: businessDayEnd,
+          },
+        },
+        select: {
+          due_amount: true,
+          paid_capital: true,
+          paid_interest: true,
+        },
+      });
+      stats.totalUnpaid = todaySchedules.reduce(
+        (sum, schedule) =>
+          sum +
+          (Number(schedule.due_amount || 0) -
+            Number(schedule.paid_capital || 0) -
+            Number(schedule.paid_interest || 0)),
+        0,
+      );
+
+      // 6. 协商：当天status_changed_at不为空且status=negotiated的数量
+      const negotiatedLoans = await this.prisma.loanAccount.findMany({
+        where: {
+          id: { in: loanAccountIds },
+          status: 'negotiated',
+          status_changed_at: {
+            gte: businessDayStart,
+            lt: businessDayEnd,
+          },
+        },
+      });
+      stats.negotiatedCount = negotiatedLoans.length;
+
+      // 7. 黑名单：当天status_changed_at不为空且status=blacklist的数量
+      const blacklistLoans = await this.prisma.loanAccount.findMany({
+        where: {
+          id: { in: loanAccountIds },
+          status: 'blacklist',
+          status_changed_at: {
+            gte: businessDayStart,
+            lt: businessDayEnd,
+          },
+        },
+      });
+      stats.blacklistCount = blacklistLoans.length;
+
+      delete stats.loanAccounts; // Clean up
+    }
+
+    return Array.from(adminStats.values());
   }
 
   // 格式化统计数据
@@ -929,5 +1170,147 @@ export class StatisticsService {
         created_at: account.created_at,
       })),
     };
+  }
+
+  async getAdminOverview() {
+    // --- Today's Date Range (Local Time) ---
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date();
+    todayEnd.setHours(23, 59, 59, 999);
+
+    // --- 1. Total Stats Calculation ---
+    const allLoanAccounts = await this.prisma.loanAccount.findMany();
+
+    const totalReceivingAmount = allLoanAccounts.reduce(
+      (sum, acc) => sum + Number(acc.receiving_amount || 0),
+      0,
+    );
+    const totalCompanyCost = allLoanAccounts.reduce(
+      (sum, acc) => sum + Number(acc.company_cost || 0),
+      0,
+    );
+    const totalHandlingFee = allLoanAccounts.reduce(
+      (sum, acc) => sum + Number(acc.handling_fee),
+      0,
+    );
+    const totalFines = allLoanAccounts.reduce(
+      (sum, acc) => sum + Number(acc.total_fines),
+      0,
+    );
+
+    const inStockAccounts = allLoanAccounts.filter(
+      (acc) => acc.status === 'pending' || acc.status === 'active',
+    );
+    const inStockCount = inStockAccounts.length;
+    const inStockAmount = inStockAccounts.reduce(
+      (sum, acc) => sum + Number(acc.loan_amount),
+      0,
+    );
+    const totalUnpaidCapital = inStockAccounts.reduce(
+      (sum, acc) => sum + (Number(acc.loan_amount) - Number(acc.paid_capital)),
+      0,
+    );
+
+    const negotiatedCount = allLoanAccounts.filter(
+      (acc) => acc.status === 'negotiated',
+    ).length;
+    const blacklistCount = allLoanAccounts.filter(
+      (acc) => acc.status === 'blacklist',
+    ).length;
+
+    const totalStats = {
+      totalAmount: totalReceivingAmount - totalCompanyCost,
+      inStockCount,
+      inStockAmount,
+      totalReceivingAmount,
+      totalUnpaidCapital,
+      totalHandlingFee,
+      totalFines,
+      negotiatedCount,
+      blacklistCount,
+    };
+
+    // --- 2. Today's Stats Calculation ---
+    const newInStockToday = await this.prisma.loanAccount.aggregate({
+      where: {
+        created_at: {
+          gte: todayStart,
+          lte: todayEnd,
+        },
+      },
+      _sum: {
+        loan_amount: true,
+        handling_fee: true,
+      },
+    });
+
+    const settledLoanSchedules = await this.prisma.repaymentSchedule.findMany({
+      where: {
+        loan_account: {
+          status: 'settled',
+        },
+        paid_at: {
+          gte: todayStart,
+          lte: todayEnd,
+        },
+      },
+      select: {
+        loan_id: true,
+        period: true,
+        loan_account: {
+          select: {
+            total_periods: true,
+            loan_amount: true,
+          },
+        },
+      },
+    });
+
+    const lastPeriods = new Map<string, number>();
+    settledLoanSchedules.forEach((s) => {
+      const maxPeriod = Math.max(lastPeriods.get(s.loan_id) || 0, s.period);
+      lastPeriods.set(s.loan_id, maxPeriod);
+    });
+
+    const clearedOffAmount = settledLoanSchedules
+      .filter(
+        (s) =>
+          s.period === s.loan_account.total_periods &&
+          lastPeriods.get(s.loan_id) === s.period,
+      )
+      .reduce((sum, s) => sum + Number(s.loan_account.loan_amount), 0);
+
+    const todaySchedules = await this.prisma.repaymentSchedule.findMany({
+      where: {
+        due_end_date: {
+          gte: todayStart,
+          lte: todayEnd,
+        },
+      },
+      select: {
+        capital: true,
+        paid_capital: true,
+      },
+    });
+
+    const todayPaidCapital = todaySchedules.reduce(
+      (sum, s) => sum + Number(s.paid_capital || 0),
+      0,
+    );
+    const todayUnpaidCapital = todaySchedules.reduce(
+      (sum, s) => sum + (Number(s.capital || 0) - Number(s.paid_capital || 0)),
+      0,
+    );
+
+    const todayStats = {
+      newInStockAmount: newInStockToday._sum.loan_amount || 0,
+      clearedOffAmount,
+      todayPaidCapital,
+      todayUnpaidCapital,
+      todayHandlingFee: newInStockToday._sum.handling_fee || 0,
+    };
+
+    return { totalStats, todayStats };
   }
 }

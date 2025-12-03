@@ -149,7 +149,12 @@ export class LoanAccountsController {
   @Put(':id/status')
   async updateStatus(
     @Param('id') id: string,
-    @Body() body: { status: LoanAccountStatus },
+    @Body()
+    body: {
+      status: LoanAccountStatus;
+      settlement_capital?: number;
+      settlement_interest?: number;
+    },
   ): Promise<ApiResponseDto> {
     try {
       if (!body.status) {
@@ -159,6 +164,10 @@ export class LoanAccountsController {
       const updated = await this.loanAccountsService.updateStatus(
         id,
         body.status,
+        {
+          settlementCapital: body.settlement_capital,
+          settlementInterest: body.settlement_interest,
+        },
       );
       return ResponseHelper.success(updated, '更新贷款状态成功');
     } catch (error: any) {

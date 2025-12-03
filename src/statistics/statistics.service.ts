@@ -6,7 +6,7 @@ export class StatisticsService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * 获取业务日期（每天早上6点以后算当天，6点前算前一天）
+   * 获取业务日期（从当天的 00:00:00 开始算）
    * @param date 基准日期，如果不提供则使用当前时间
    * @returns 业务日期（只包含日期部分，时间设为0点）
    */
@@ -14,36 +14,33 @@ export class StatisticsService {
     const now = date || new Date();
     const businessDate = new Date(now);
 
-    // 如果当前时间在6点之前，则业务日期是前一天
-    if (now.getHours() < 6) {
-      businessDate.setDate(now.getDate() - 1);
-    }
-
-    // 设置时间为0点
+    // 设置时间为0点（从当天 00:00:00 开始算）
     businessDate.setHours(0, 0, 0, 0);
     return businessDate;
   }
 
   /**
-   * 获取业务日期的开始时间（当天6点）
+   * 获取业务日期的开始时间（当天 00:00:00）
    * @param date 基准日期，如果不提供则使用当前时间
-   * @returns 业务日期的开始时间（当天6点）
+   * @returns 业务日期的开始时间（当天 00:00:00）
    */
   private getBusinessDayStart(date?: Date): Date {
     const businessDate = this.getBusinessDate(date);
-    businessDate.setHours(6, 0, 0, 0);
+    // 当天 00:00:00
+    businessDate.setHours(0, 0, 0, 0);
     return businessDate;
   }
 
   /**
-   * 获取业务日期的结束时间（次日6点）
+   * 获取业务日期的结束时间（当天 23:59:59.999）
    * @param date 基准日期，如果不提供则使用当前时间
-   * @returns 业务日期的结束时间（次日6点）
+   * @returns 业务日期的结束时间（当天 23:59:59.999）
    */
   private getBusinessDayEnd(date?: Date): Date {
-    const businessDayStart = this.getBusinessDayStart(date);
+    const businessDayStart = this.getBusinessDate(date);
+    // 当天 23:59:59.999
     const businessDayEnd = new Date(businessDayStart);
-    businessDayEnd.setDate(businessDayEnd.getDate() + 1);
+    businessDayEnd.setHours(23, 59, 59, 999);
     return businessDayEnd;
   }
 
@@ -401,7 +398,7 @@ export class StatisticsService {
 
   // 获取collector/risk_controller的当天统计数据
   async getCollectorStatistics(adminId: number): Promise<any> {
-    // 使用业务日期：6点后算当天，6点前算前一天
+    // 使用业务日期：从当天的 00:00:00 开始算
     const businessDate = this.getBusinessDate();
 
     const statistic = await this.prisma.dailyStatistics.findFirst({
@@ -518,7 +515,7 @@ export class StatisticsService {
   }
 
   async getTodayAdminStatistics(): Promise<any[]> {
-    // 使用业务日期（6点作为分界点）
+    // 使用业务日期：从当天的 00:00:00 开始，到 23:59:59.999 结束
     const businessDayStart = this.getBusinessDayStart();
     const businessDayEnd = this.getBusinessDayEnd();
 
@@ -566,7 +563,7 @@ export class StatisticsService {
       const newLoanAccounts = await this.prisma.loanAccount.findMany({
         where: {
           id: { in: loanAccountIds },
-          created_at: {
+          due_start_date: {
             gte: businessDayStart,
             lt: businessDayEnd,
           },
@@ -654,11 +651,11 @@ export class StatisticsService {
       );
 
       // 5. 未收：当天RepaymentSchedule的(due_amount - paid_capital - paid_interest)总和
-      // 这里需要找到当天有更新的RepaymentSchedule（通过paid_at判断）
+      // 查询当天 due_start_date 是当天的 RepaymentSchedule
       const todaySchedules = await this.prisma.repaymentSchedule.findMany({
         where: {
           loan_id: { in: loanAccountIds },
-          paid_at: {
+          due_start_date: {
             gte: businessDayStart,
             lt: businessDayEnd,
           },
@@ -710,138 +707,6 @@ export class StatisticsService {
     return Array.from(adminStats.values());
   }
 
-  // 格式化统计数据
-  private formatStatistics(
-    rawStats: Array<{
-      id: number;
-      admin_id: number;
-      admin_name: string;
-      date: Date;
-      total_amount: any;
-      payee_amount: any;
-      receiving_amount: any;
-      transaction_count: number;
-      admin_id_included: number;
-      username: string;
-      role: string;
-    }>,
-    dateStr: string,
-  ): any[] {
-    const statistics = rawStats.map((stat) => {
-      // 处理日期：确保转换为字符串格式
-      let dateValue: string;
-      const dateObj = stat.date as Date | string;
-      if (dateObj instanceof Date) {
-        dateValue = dateObj.toISOString().split('T')[0];
-      } else if (typeof dateObj === 'string') {
-        dateValue = dateObj.split('T')[0];
-      } else {
-        dateValue = dateStr;
-      }
-
-      return {
-        admin_id: stat.admin_id,
-        admin_name: stat.admin_name,
-        role: stat.role,
-        date: dateValue,
-        total_amount:
-          Number(stat.receiving_amount || 0) + Number(stat.payee_amount || 0),
-        payee_amount: Number(stat.payee_amount || 0),
-        receiving_amount: Number(stat.receiving_amount || 0),
-        transaction_count: Number(stat.transaction_count || 0),
-      };
-    });
-
-    console.log(
-      `✅ 最终查询结果: statistics.length=${statistics.length}; admin_names=${statistics.map((stat) => stat.admin_name).join(', ')}`,
-    );
-
-    return statistics;
-  }
-
-  // 创建默认统计记录：为所有有 loan_account 关联的管理员创建默认值（0）
-  // 注意：只创建 collector 和 risk_controller 角色的统计记录，与 calculateDailyStatistics 逻辑保持一致
-  private async createDefaultStatistics(
-    date: Date,
-    dateStr: string,
-  ): Promise<void> {
-    // 获取所有在 LoanAccountRole 表中，角色为 collector 或 risk_controller 的管理员（去重）
-    // 这与 calculateDailyStatistics 方法中的逻辑保持一致
-    const adminRoles = await this.prisma.loanAccountRole.findMany({
-      where: {
-        role_type: {
-          in: ['collector', 'risk_controller'],
-        },
-      },
-      select: {
-        admin_id: true,
-        admin: {
-          select: {
-            id: true,
-            username: true,
-            role: true,
-          },
-        },
-      },
-      distinct: ['admin_id'],
-    });
-
-    if (adminRoles.length === 0) {
-      console.log(
-        `⚠️ 没有找到任何有 loan_account 关联的 collector 或 risk_controller 管理员`,
-      );
-      return;
-    }
-
-    console.log(`📊 为 ${adminRoles.length} 个管理员创建默认统计记录`);
-
-    // 创建日期对象，使用 UTC 时间，设置为中午 12:00:00
-    const dateForDb = new Date(dateStr + 'T12:00:00.000Z');
-
-    // 使用事务批量创建默认统计记录
-    await this.prisma.$transaction(
-      async (tx) => {
-        for (const adminRole of adminRoles) {
-          const adminId = adminRole.admin_id;
-          const adminName = adminRole.admin.username;
-
-          try {
-            // 尝试创建默认记录（所有值都为0）
-            await tx.dailyStatistics.create({
-              data: {
-                admin_id: adminId,
-                admin_name: adminName,
-                date: dateForDb,
-                total_amount: 0,
-                payee_amount: 0,
-                receiving_amount: 0,
-                transaction_count: 0,
-              },
-            });
-            console.log(
-              `✅ 创建默认统计记录: admin_id=${adminId}, admin_name=${adminName}, date=${dateStr}`,
-            );
-          } catch (error: any) {
-            // 如果是唯一约束错误，说明记录已存在，跳过
-            if (error?.code === 'P2002') {
-              console.log(
-                `⚠️ 统计记录已存在: admin_id=${adminId}, date=${dateStr}`,
-              );
-            } else {
-              console.error(
-                `❌ 创建默认统计记录失败: admin_id=${adminId}, date=${dateStr}`,
-                error,
-              );
-            }
-          }
-        }
-      },
-      { timeout: 30000 },
-    );
-
-    console.log(`✅ 默认统计记录创建完成`);
-  }
-
   // 检查指定admin_id在指定日期是否有统计数据
   async checkStatisticsExists(adminId: number, date: Date): Promise<boolean> {
     // 使用日期字符串查询，避免时区问题
@@ -859,7 +724,7 @@ export class StatisticsService {
 
   // 检查指定日期是否有任何统计数据
   async checkTodayStatisticsExists(date: Date): Promise<boolean> {
-    // 使用业务日期：6点后算当天，6点前算前一天
+    // 使用业务日期：从当天的 00:00:00 开始算
     const businessDate = this.getBusinessDate(date);
     const dateStr = businessDate.toISOString().split('T')[0];
 
@@ -1000,7 +865,7 @@ export class StatisticsService {
 
     // 5. 计算总览统计数据（使用现有的统计方法获取Stats类型数据）
     const now = new Date();
-    // 使用业务日期：6点后算当天，6点前算前一天
+    // 使用业务日期：从当天的 00:00:00 开始，到 23:59:59.999 结束
     const businessDayStart = this.getBusinessDayStart(now);
     const businessDayEnd = this.getBusinessDayEnd(now);
 
@@ -1017,7 +882,7 @@ export class StatisticsService {
     const startOfYear = new Date(businessDate.getFullYear(), 0, 1);
     startOfYear.setHours(6, 0, 0, 0);
 
-    // 今日收款（业务日期的6点到次日6点）- 从repayment_schedules统计
+    // 今日收款（业务日期的 00:00:00 到 23:59:59.999）- 从repayment_schedules统计
     const todayPaidSchedules = await this.prisma.repaymentSchedule.findMany({
       where: {
         loan_id: { in: loanAccountIds },
@@ -1036,7 +901,7 @@ export class StatisticsService {
       },
     };
 
-    // 本月收款（从本月1号6点开始到现在）- 从repayment_schedules统计
+    // 本月收款（从本月1号 00:00:00 开始到现在）- 从repayment_schedules统计
     const monthSchedules = await this.prisma.repaymentSchedule.findMany({
       where: {
         loan_id: { in: loanAccountIds },
@@ -1055,7 +920,7 @@ export class StatisticsService {
       },
     };
 
-    // 本年收款（从本年1月1号6点开始到现在）- 从repayment_schedules统计
+    // 本年收款（从本年1月1号 00:00:00 开始到现在）- 从repayment_schedules统计
     const yearSchedules = await this.prisma.repaymentSchedule.findMany({
       where: {
         loan_id: { in: loanAccountIds },
@@ -1080,7 +945,7 @@ export class StatisticsService {
       0,
     );
 
-    // 今日事项统计（业务日期的6点到次日6点）
+    // 今日事项统计（业务日期的 00:00:00 到 23:59:59.999）
     // 使用 due_start_date 来查询今天应该还款的计划
     const todayDueSchedules = await this.prisma.repaymentSchedule.findMany({
       where: {

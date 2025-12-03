@@ -83,6 +83,7 @@ model LoanAccount {
   loan_amount        Decimal           @db.Decimal(10, 2)
   receiving_amount   Decimal?          @db.Decimal(10, 2)
   paid_capital       Decimal           @default(0) @db.Decimal(10, 2)
+  paid_interest      Decimal           @default(0) @db.Decimal(10, 2)
   total_fines        Decimal           @default(0) @db.Decimal(10, 2)
   to_hand_ratio      Decimal?          @db.Decimal(10, 2)
   capital            Decimal           @db.Decimal(10, 2)

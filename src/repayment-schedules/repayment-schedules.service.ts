@@ -344,16 +344,26 @@ export class RepaymentSchedulesService {
         },
       });
       const repaidPeriods = paidSchedules.length;
-
+      const loan = await tx.loanAccount.findUnique({
+        where: { id: loanId },
+        select: {
+          user_id: true,
+          payee_id: true,
+          receiving_amount: true,
+          paid_capital: true,
+          paid_interest: true,
+          total_fines: true,
+        },
+      });
       // 更新 LoanAccount，同时保存上次编辑的输入值
       // 保存前端传入的原始值，供下次编辑时使用
       const inputFines = data.fines !== undefined ? Number(data.fines) : null;
       await tx.loanAccount.update({
         where: { id: loanId },
         data: {
-          receiving_amount: totalReceiving,
-          paid_capital: loanPaidCapital,
-          paid_interest: loanPaidInterest,
+          receiving_amount: Number(loan?.receiving_amount || 0) + currPaid,
+          paid_capital: Number(loan?.paid_capital || 0) + inputCapital,
+          paid_interest: Number(loan?.paid_interest || 0) + inputInterest,
           repaid_periods: repaidPeriods,
           total_fines: totalFines,
           // 保存上次编辑的输入值（前端传入的原始值），供下次编辑时使用

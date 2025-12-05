@@ -651,10 +651,20 @@ export class StatisticsService {
       );
 
       // 5. 未收：当天RepaymentSchedule的(due_amount - paid_capital - paid_interest)总和
+      const pendingLoanAccounts = await this.prisma.loanAccount.findMany({
+        where: {
+          id: { in: loanAccountIds },
+          status: 'pending',
+        },
+        select: {
+          id: true,
+        },
+      });
+      const pendingLoanAccountIds = pendingLoanAccounts.map((l) => l.id);
       // 查询当天 due_start_date 是当天的 RepaymentSchedule
       const todaySchedules = await this.prisma.repaymentSchedule.findMany({
         where: {
-          loan_id: { in: loanAccountIds },
+          loan_id: { in: pendingLoanAccountIds },
           due_start_date: {
             gte: businessDayStart,
             lt: businessDayEnd,

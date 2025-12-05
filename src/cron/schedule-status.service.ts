@@ -61,7 +61,7 @@ export class ScheduleStatusService implements OnModuleInit {
     const overdueResult = await this.prisma.repaymentSchedule.updateMany({
       where: {
         due_end_date: { lt: todayStart }, // 结束日期 < 今天，表示已过期
-        status: { in: ['pending', 'active'] },
+        status: { in: ['pending'] },
       },
       data: { status: 'overdue' as RepaymentScheduleStatus },
     });

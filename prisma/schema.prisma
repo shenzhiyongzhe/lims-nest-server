@@ -75,6 +75,7 @@ enum RepaymentScheduleStatus {
   active
   overdue
   paid
+  terminated
 }
 
 model LoanAccount {
@@ -105,6 +106,13 @@ model LoanAccount {
   created_by         Int
   updated_at         DateTime?         @updatedAt
   status_changed_at  DateTime?
+  note               String?           @db.VarChar(300)
+  last_edit_pay_capital   Decimal?     @db.Decimal(10, 2)
+  last_edit_pay_interest  Decimal?     @db.Decimal(10, 2)
+  last_edit_fines         Decimal?     @db.Decimal(10, 2)
+  // 提前结清本金与利息（与已还本金/利息区分开）
+  early_settlement_capital  Decimal?   @db.Decimal(10, 2)
+  early_settlement_interest Decimal?   @db.Decimal(10, 2)
 
   // 关系
   user               User                @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: Cascade)

@@ -610,6 +610,11 @@ export class LoanAccountsService {
         updateData.lender_id = data.lender_id;
       }
 
+      // 处理备注字段
+      if (data.note !== undefined) {
+        updateData.note = data.note;
+      }
+
       // 更新 LoanAccount
       const updated = await tx.loanAccount.update({
         where: { id },
@@ -824,7 +829,11 @@ export class LoanAccountsService {
   async updateStatus(
     id: string,
     newStatus: LoanAccountStatus,
-    options?: { settlementCapital?: number; settlementInterest?: number },
+    options?: {
+      settlementCapital?: number;
+      settlementInterest?: number;
+      settlementDate?: string;
+    },
   ): Promise<LoanAccount> {
     // 检查贷款记录是否存在
     const loan = await this.prisma.loanAccount.findUnique({
@@ -840,55 +849,95 @@ export class LoanAccountsService {
 
     // 如果新状态是 settled（已结清）或 blacklist（黑名单），
     // 需要：
-    // 1. 仅更新「今天」的还款计划为已支付
-    // 2. 删除「明天及以后」的还款计划
+    // 1. 以前端传入的 settlementDate 为分界线
+    // 2. 之前的计划保持不变，当天及以后的计划状态改为 terminated
+    // 3. 不更新 repaid_periods，保持原值
     if (newStatus === 'settled' || newStatus === 'blacklist') {
       const updated = await this.prisma.$transaction(async (tx) => {
+        // 解析前端传入的结清/拉黑日期
+        let settlementDate: Date;
+        if (options?.settlementDate) {
+          // 解析 YYYY-MM-DD 格式的日期字符串
+          const dateMatch = options.settlementDate.match(
+            /^(\d{4})-(\d{2})-(\d{2})$/,
+          );
+          if (dateMatch) {
+            const [, year, month, day] = dateMatch;
+            settlementDate = new Date(
+              Date.UTC(Number(year), Number(month) - 1, Number(day)),
+            );
+          } else {
+            settlementDate = new Date(options.settlementDate);
+          }
+        } else {
+          // 如果没有传入日期，使用今天
+          const now = new Date();
+          settlementDate = new Date(
+            Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+          );
+        }
+
         // 获取所有关联的还款计划
         const schedules = await tx.repaymentSchedule.findMany({
           where: { loan_id: id },
         });
 
-        // 根据日期分组：过去、今天、未来
-        const todaySchedules = schedules.filter((s) =>
-          s.due_end_date ? this.isToday(new Date(s.due_end_date)) : false,
+        // 以 settlementDate 为分界线，将计划分为两类
+        const settlementDateStart = new Date(
+          Date.UTC(
+            settlementDate.getUTCFullYear(),
+            settlementDate.getUTCMonth(),
+            settlementDate.getUTCDate(),
+            0,
+            0,
+            0,
+            0,
+          ),
         );
-        const futureSchedules = schedules.filter((s) => {
-          if (!s.due_end_date) return false;
-          const d = new Date(s.due_end_date);
-          const now = new Date();
-          const todayStart = new Date(
+        const settlementDateEnd = new Date(
+          Date.UTC(
+            settlementDate.getUTCFullYear(),
+            settlementDate.getUTCMonth(),
+            settlementDate.getUTCDate(),
+            23,
+            59,
+            59,
+          ),
+        );
+
+        // 以后的计划：状态改为 terminated
+        const schedulesToTerminate = schedules.filter((s) => {
+          if (!s.due_start_date) return false;
+          const scheduleStart = new Date(
             Date.UTC(
-              now.getUTCFullYear(),
-              now.getUTCMonth(),
-              now.getUTCDate(),
+              new Date(s.due_start_date).getUTCFullYear(),
+              new Date(s.due_start_date).getUTCMonth(),
+              new Date(s.due_start_date).getUTCDate(),
               0,
               0,
               0,
               0,
             ),
           );
-          const tomorrowStart = new Date(todayStart);
-          tomorrowStart.setUTCDate(tomorrowStart.getUTCDate() + 1);
-          const dUTC = new Date(
-            Date.UTC(
-              d.getUTCFullYear(),
-              d.getUTCMonth(),
-              d.getUTCDate(),
-              0,
-              0,
-              0,
-              0,
-            ),
-          );
-          return dUTC >= tomorrowStart;
+          return scheduleStart > settlementDateStart;
         });
 
-        const effectiveSchedules = schedules.filter(
-          (s) => !futureSchedules.some((f) => f.id === s.id),
-        );
+        // 更新当天以后的计划状态为 terminated
+        if (schedulesToTerminate.length > 0) {
+          await tx.repaymentSchedule.updateMany({
+            where: {
+              loan_id: id,
+              id: {
+                in: schedulesToTerminate.map((s) => s.id),
+              },
+            },
+            data: {
+              status: 'terminated' as RepaymentScheduleStatus,
+            },
+          });
+        }
 
-        // 结清/拉黑前累计的已收金额（仅统计保留的计划）
+        // 结清/拉黑前累计的已收金额（统计所有计划）
         const prevTotalReceiving = schedules.reduce(
           (sum, s) => sum + this.toNumber(s.paid_amount),
           0,
@@ -903,24 +952,6 @@ export class LoanAccountsService {
           (sum, s) => sum + this.toNumber(s.paid_interest),
           0,
         );
-
-        // 仅更新「今天」且状态为 pending 或 active 的还款计划为已支付状态
-        const targetSchedules = todaySchedules.filter(
-          (s) => s.status === 'pending' || s.status === 'active',
-        );
-        for (const schedule of targetSchedules) {
-          const dueAmount = this.toNumber(schedule.due_amount);
-          const fines = this.toNumber(schedule.fines);
-          await tx.repaymentSchedule.update({
-            where: { id: schedule.id },
-            data: {
-              status: 'paid' as RepaymentScheduleStatus,
-              paid_capital: 0,
-              paid_interest: 0,
-              paid_amount: dueAmount + fines,
-            },
-          });
-        }
 
         // 结清使用的本金和利息（如果前端传入则优先使用）
         const manualCapital = options?.settlementCapital ?? 0;
@@ -937,8 +968,9 @@ export class LoanAccountsService {
           settlementAmount = 0;
         }
 
-        // 结清/拉黑后的应收总额 = 之前已收金额 + 本次结清/拉黑金额
-        receivingAmount = prevTotalReceiving + settlementAmount;
+        // 结清/拉黑后的应收总额：
+        // = 已还本金 + 已还利息（截至结清前）+ 提前结清的本金 + 提前结清的利息
+        receivingAmount = prevTotalReceiving + manualCapital + manualInterest;
 
         // 若有结清/拉黑金额，写入一条还款记录 + 完成订单
         if (settlementAmount > 0) {
@@ -989,25 +1021,11 @@ export class LoanAccountsService {
           });
         }
 
-        // 删除「明天及以后」的还款计划
-        if (futureSchedules.length > 0) {
-          await tx.repaymentSchedule.deleteMany({
-            where: {
-              loan_id: id,
-              id: {
-                in: futureSchedules.map((s) => s.id),
-              },
-            },
-          });
-        }
-
-        // 更新贷款账户
-        const totalPeriods = loan.total_periods || effectiveSchedules.length;
+        // 更新贷款账户（不更新 repaid_periods，保持原值）
         const updateData: any = {
           status: newStatus,
-          repaid_periods: totalPeriods,
-          // 重新计算 receiving_amount（包含罚金）
           receiving_amount: receivingAmount,
+          due_end_date: settlementDateEnd,
         };
 
         // 如果是黑名单，记录状态变更时间
@@ -1017,10 +1035,17 @@ export class LoanAccountsService {
 
         // 如果使用了手动结清的本金和利息，更新到 LoanAccount
         if (hasManualSettlement) {
-          // 前端传入的结清本金/利息是针对「今天及以后」的还款计划，
+          // 前端传入的结清本金/利息是针对「当天及以后」的还款计划，
           // 因此 LoanAccount 层面的已收本金/利息 = 之前历史已收 + 本次结清金额
           updateData.paid_capital = prevPaidCapital + manualCapital;
           updateData.paid_interest = prevPaidInterest + manualInterest;
+          // 仅在前端有传值时记录提前结清部分，避免被写成 0 覆盖原值
+          if (options?.settlementCapital !== undefined) {
+            (updateData as any).early_settlement_capital = manualCapital;
+          }
+          if (options?.settlementInterest !== undefined) {
+            (updateData as any).early_settlement_interest = manualInterest;
+          }
         } else {
           // 否则从还款计划中计算
           const loanPaidCapital = schedules.reduce(

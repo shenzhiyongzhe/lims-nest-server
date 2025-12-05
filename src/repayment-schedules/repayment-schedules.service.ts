@@ -93,9 +93,8 @@ export class RepaymentSchedulesService {
         value !== null && value !== undefined ? Number(value) : 0;
 
       // 前端传入的 pay_capital / pay_interest 代表「本期已还总金额」，
-      // 不再累加，而是直接覆盖到 paid_capital / paid_interest 上（并做边界限制）
-      const inputCapital = Math.max(0, Number(data.pay_capital) || 0);
-      const inputInterest = Math.max(0, Number(data.pay_interest) || 0);
+      const inputCapital = Number(data.pay_capital) || 0;
+      const inputInterest = Number(data.pay_interest) || 0;
 
       const baseCapital = toNumber(currentSchedule.capital);
       const baseInterest = toNumber(currentSchedule.interest);
@@ -346,7 +345,9 @@ export class RepaymentSchedulesService {
       });
       const repaidPeriods = paidSchedules.length;
 
-      // 更新 LoanAccount
+      // 更新 LoanAccount，同时保存上次编辑的输入值
+      // 保存前端传入的原始值，供下次编辑时使用
+      const inputFines = data.fines !== undefined ? Number(data.fines) : null;
       await tx.loanAccount.update({
         where: { id: loanId },
         data: {
@@ -355,6 +356,11 @@ export class RepaymentSchedulesService {
           paid_interest: loanPaidInterest,
           repaid_periods: repaidPeriods,
           total_fines: totalFines,
+          // 保存上次编辑的输入值（前端传入的原始值），供下次编辑时使用
+          last_edit_pay_capital: inputCapital > 0 ? inputCapital : null,
+          last_edit_pay_interest: inputInterest > 0 ? inputInterest : null,
+          last_edit_fines:
+            inputFines !== null && inputFines > 0 ? inputFines : null,
         },
       });
 

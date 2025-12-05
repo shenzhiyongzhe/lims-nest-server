@@ -154,6 +154,7 @@ export class LoanAccountsController {
       status: LoanAccountStatus;
       settlement_capital?: number;
       settlement_interest?: number;
+      settlement_date?: string;
     },
   ): Promise<ApiResponseDto> {
     try {
@@ -167,6 +168,7 @@ export class LoanAccountsController {
         {
           settlementCapital: body.settlement_capital,
           settlementInterest: body.settlement_interest,
+          settlementDate: body.settlement_date,
         },
       );
       return ResponseHelper.success(updated, '更新贷款状态成功');

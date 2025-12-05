@@ -100,5 +100,7 @@ export class UpdateLoanAccountDto {
   @IsOptional()
   @Min(1)
   apply_times?: number;
-}
 
+  @IsOptional()
+  note?: string;
+}

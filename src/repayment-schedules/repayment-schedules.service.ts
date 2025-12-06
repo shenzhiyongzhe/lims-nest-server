@@ -145,11 +145,7 @@ export class RepaymentSchedulesService {
       let derivedStatus: RepaymentScheduleStatus = currentSchedule.status;
       if (inputCapital >= baseCapital && inputInterest >= baseInterest) {
         derivedStatus = 'paid';
-      } else if (
-        inputCapital > 0 ||
-        inputInterest > 0 ||
-        (data.fines !== undefined && data.fines > 0)
-      ) {
+      } else if (paidAmount >= 1) {
         derivedStatus = 'active';
       }
       updatePayload.status = derivedStatus;
@@ -311,31 +307,6 @@ export class RepaymentSchedulesService {
       }
 
       // 重新计算 receiving_amount：所有还款计划的(已还本金+已还利息+罚金) 之和，并汇总 LoanAccount 的已还本金和已还利息
-      const allSchedules = await tx.repaymentSchedule.findMany({
-        where: { loan_id: loanId },
-        select: { paid_capital: true, paid_interest: true, fines: true },
-      });
-      const totalReceiving = allSchedules.reduce(
-        (sum, s) =>
-          sum +
-          Number(s.paid_capital || 0) +
-          Number(s.paid_interest || 0) +
-          Number(s.fines || 0),
-        0,
-      );
-      const loanPaidCapital = allSchedules.reduce(
-        (sum, s) => sum + Number(s.paid_capital || 0),
-        0,
-      );
-      const loanPaidInterest = allSchedules.reduce(
-        (sum, s) => sum + Number(s.paid_interest || 0),
-        0,
-      );
-      const totalFines = allSchedules.reduce(
-        (sum, s) => sum + Number(s.fines || 0),
-        0,
-      );
-
       // 计算 repaid_periods：状态为 paid 的计划数量
       const paidSchedules = await tx.repaymentSchedule.findMany({
         where: {
@@ -365,7 +336,7 @@ export class RepaymentSchedulesService {
           paid_capital: Number(loan?.paid_capital || 0) + inputCapital,
           paid_interest: Number(loan?.paid_interest || 0) + inputInterest,
           repaid_periods: repaidPeriods,
-          total_fines: totalFines,
+          total_fines: Number(loan?.total_fines || 0) + finesValue,
           // 保存上次编辑的输入值（前端传入的原始值），供下次编辑时使用
           last_edit_pay_capital: inputCapital > 0 ? inputCapital : null,
           last_edit_pay_interest: inputInterest > 0 ? inputInterest : null,

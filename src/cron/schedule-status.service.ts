@@ -50,7 +50,8 @@ export class ScheduleStatusService implements OnModuleInit {
       where: {
         due_start_date: { lte: now },
         due_end_date: { gte: todayStart, lt: tomorrowStart }, // 结束日期 >= 今天且 < 明天，表示未过期
-        status: { in: ['pending', 'active'] },
+        paid_amount: { lt: 1 },
+        status: { in: ['pending'] },
       },
       data: { status: 'active' as RepaymentScheduleStatus },
     });

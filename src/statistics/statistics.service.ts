@@ -476,7 +476,9 @@ export class StatisticsService {
       for (const acc of loanAccounts) {
         // 总金额 = Σ(receiving_amount) − Σ(company_cost)
         stats.totalAmount +=
-          Number(acc.receiving_amount || 0) - Number(acc.company_cost || 0);
+          Number(acc.receiving_amount || 0) -
+          Number(acc.company_cost || 0) +
+          Number(acc.total_fines || 0);
 
         // 已收金额 = Σ(receiving_amount)（包含罚金）
         stats.totalReceivingAmount += Number(acc.receiving_amount || 0);

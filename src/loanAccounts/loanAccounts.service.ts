@@ -101,12 +101,9 @@ export class LoanAccountsService {
    * @returns 应该的状态
    */
   private determineScheduleStatus(
-    startDate: Date,
     endDate: Date,
     currentStatus: RepaymentScheduleStatus,
   ): RepaymentScheduleStatus {
-    const now = new Date();
-
     // 如果已经是 paid 状态，保持不变
     if (currentStatus === 'paid') {
       return 'paid';
@@ -115,34 +112,6 @@ export class LoanAccountsService {
     // 如果已过期，返回 overdue
     if (this.isOverdue(endDate)) {
       return 'overdue';
-    }
-
-    // 如果开始日期 <= 现在，返回 active
-    const startDateUTC = new Date(
-      Date.UTC(
-        startDate.getUTCFullYear(),
-        startDate.getUTCMonth(),
-        startDate.getUTCDate(),
-        0,
-        0,
-        0,
-        0,
-      ),
-    );
-    const nowUTC = new Date(
-      Date.UTC(
-        now.getUTCFullYear(),
-        now.getUTCMonth(),
-        now.getUTCDate(),
-        0,
-        0,
-        0,
-        0,
-      ),
-    );
-
-    if (startDateUTC <= nowUTC) {
-      return 'active';
     }
 
     // 否则返回 pending
@@ -229,7 +198,6 @@ export class LoanAccountsService {
       const periods = Number(total_periods) || 0;
       const perCapital = Number(capital) || 0; // 每期本金（除最后一期）
       const perInterest = Number(interest) || 0; // 每期利息（固定不变）
-
       // 生成还款计划：最后一期本金为剩余本金；应还金额 = 本金 + 利息
       let remainingPrincipal = Number(data.loan_amount) || 0; // 假定 loan_amount 为总本金
       const rows = Array.from({ length: periods }).map((_, idx) => {
@@ -264,13 +232,8 @@ export class LoanAccountsService {
 
         // 根据日期判断状态：如果第一期是今天，状态应该是 active
         let scheduleStatus: RepaymentScheduleStatus = 'pending';
-        if (idx === 0) {
-          // 第一期：如果开始日期是今天，状态为 active
-          scheduleStatus = this.determineScheduleStatus(d, end, 'pending');
-        } else {
-          // 其他期：默认 pending，后续由定时任务更新
-          scheduleStatus = 'pending';
-        }
+        // 第一期：如果开始日期是今天，状态为 active
+        scheduleStatus = this.determineScheduleStatus(end, 'pending');
 
         return {
           loan_id: created.id,
@@ -699,7 +662,6 @@ export class LoanAccountsService {
 
             // 根据新的日期判断应该的状态
             const newStatus = this.determineScheduleStatus(
-              newStartDate,
               newEndDate,
               currentSchedule?.status || 'pending',
             );

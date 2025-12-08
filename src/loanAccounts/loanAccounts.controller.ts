@@ -110,9 +110,9 @@ export class LoanAccountsController {
     @CurrentUser() user: { id: number },
   ): Promise<ApiResponseDto> {
     try {
-      const { due_start_date, total_periods, collector_id, payee_id } = body;
+      const { due_start_date, total_periods, collector_id } = body;
 
-      if (!due_start_date || !total_periods || !collector_id || !payee_id) {
+      if (!due_start_date || !total_periods || !collector_id) {
         return ResponseHelper.error('缺少必要参数', 400);
       }
 

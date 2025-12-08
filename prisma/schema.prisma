@@ -51,7 +51,6 @@ model Admin {
   loanAccountRoles             LoanAccountRole[]
   loanAccountsAsCollector      LoanAccount[]     @relation("CollectorLoanAccounts")
   loanAccountsAsRiskController LoanAccount[]     @relation("RiskControllerLoanAccounts")
-  loanAccountsAsPayee          LoanAccount[]     @relation("PayeeLoanAccounts")
   loanAccountsAsLender         LoanAccount[]     @relation("LenderLoanAccounts")
   dailyStatistics              DailyStatistics[]
 
@@ -99,7 +98,6 @@ model LoanAccount {
   daily_repayment    Decimal           @db.Decimal(10, 2)
   risk_controller_id Int
   collector_id       Int
-  payee_id           Int
   lender_id          Int
   company_cost       Int               @default(0)
   created_at         DateTime          @default(now())
@@ -118,7 +116,6 @@ model LoanAccount {
   user               User                @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
   risk_controller    Admin               @relation("RiskControllerLoanAccounts", fields: [risk_controller_id], references: [id])
   collector          Admin               @relation("CollectorLoanAccounts", fields: [collector_id], references: [id])
-  payee              Admin               @relation("PayeeLoanAccounts", fields: [payee_id], references: [id])
   lender             Admin               @relation("LenderLoanAccounts", fields: [lender_id], references: [id])
   repaymentSchedules RepaymentSchedule[]
   repaymentRecords   RepaymentRecord[]
@@ -296,16 +293,21 @@ model DailyStatistics {
   admin_id          Int
   admin_name        String   @db.VarChar(10)
   date              DateTime @db.Date
-  total_amount      Decimal  @db.Decimal(12, 2)
-  payee_amount      Decimal  @db.Decimal(12, 2)
-  receiving_amount  Decimal  @db.Decimal(12, 2)
-  transaction_count Int
+  role              String   @db.VarChar(20) // 'collector' or 'risk_controller'
+  new_in_stock_amount      Decimal  @db.Decimal(12, 2) @default(0) // 新增在库
+  cleared_off_amount        Decimal  @db.Decimal(12, 2) @default(0) // 离库结清
+  total_received           Decimal  @db.Decimal(12, 2) @default(0) // 已收
+  total_unpaid             Decimal  @db.Decimal(12, 2) @default(0) // 未收
+  total_handling_fee        Decimal  @db.Decimal(12, 2) @default(0) // 后扣
+  total_fines              Decimal  @db.Decimal(12, 2) @default(0) // 罚金
+  negotiated_count         Int      @default(0) // 协商
+  blacklist_count          Int      @default(0) // 黑名单
   created_at        DateTime @default(now())
   updated_at        DateTime @updatedAt
 
   admin Admin @relation(fields: [admin_id], references: [id])
 
-  @@unique([admin_id, date])
+  @@unique([admin_id, date, role])
   @@index([date])
   @@index([admin_id])
   @@map("daily_statistics")

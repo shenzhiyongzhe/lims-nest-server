@@ -42,12 +42,7 @@ export class RepaymentSchedulesService {
                 username: true,
               },
             },
-            payee: {
-              select: {
-                id: true,
-                username: true,
-              },
-            },
+
             lender: {
               select: {
                 id: true,
@@ -162,18 +157,12 @@ export class RepaymentSchedulesService {
 
       // 仅当存在已还金额时才需要维护还款记录
       if (currPaid > 0) {
-        // 获取 LoanAccount 与 Payee 信息
+        // 获取 LoanAccount 信息
         const loan = await tx.loanAccount.findUnique({
           where: { id: loanId },
-          select: { user_id: true, payee_id: true },
+          select: { user_id: true },
         });
         let payee = null as null | { id: number };
-        if (loan?.payee_id) {
-          payee = await tx.payee.findFirst({
-            where: { admin_id: loan.payee_id },
-            select: { id: true },
-          });
-        }
 
         // 获取操作人名称（用于显示）
         let operatorDisplayName: string | null = null;
@@ -319,7 +308,6 @@ export class RepaymentSchedulesService {
         where: { id: loanId },
         select: {
           user_id: true,
-          payee_id: true,
           receiving_amount: true,
           paid_capital: true,
           paid_interest: true,
@@ -588,12 +576,7 @@ export class RepaymentSchedulesService {
                 username: true,
               },
             },
-            payee: {
-              select: {
-                id: true,
-                username: true,
-              },
-            },
+
             lender: {
               select: {
                 id: true,

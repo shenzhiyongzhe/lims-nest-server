@@ -80,11 +80,6 @@ export class UpdateLoanAccountDto {
   @IsNumber()
   @IsPositive()
   @IsOptional()
-  payee_id?: number;
-
-  @IsNumber()
-  @IsPositive()
-  @IsOptional()
   lender_id?: number;
 
   @IsNumber()

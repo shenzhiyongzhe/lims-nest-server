@@ -218,86 +218,12 @@ export class StatisticsService {
             transaction_count: transactionCount,
           });
 
-          // 4. 保存或更新统计数据（按admin_id + date唯一）
-          // 使用事务内的 upsert 模式：先尝试创建，如果失败（唯一约束）则更新
-          // 这样可以避免并发请求时的竞态条件
-          try {
-            // 尝试创建新记录，使用统一的日期格式
-            await tx.dailyStatistics.create({
-              data: {
-                admin_id: adminId,
-                admin_name: stats.admin_name,
-                date: dateForDb,
-                total_amount: totalAmount,
-                payee_amount: payeeAmount,
-                receiving_amount: receivingAmount,
-                transaction_count: transactionCount,
-              },
-            });
-            console.log(
-              `✅ 创建统计记录: admin_id=${adminId}, date=${dateStr}`,
-            );
-          } catch (error: any) {
-            // 如果是唯一约束错误（P2002），说明记录已存在，则更新
-            if (error?.code === 'P2002') {
-              // 使用原始SQL查询查找现有记录（避免时区问题）
-              const existing = await tx.$queryRaw<Array<{ id: number }>>`
-                SELECT id FROM daily_statistics
-                WHERE admin_id = ${adminId}
-                AND DATE(date) = ${dateStr}
-                LIMIT 1
-              `;
-
-              if (existing && existing.length > 0) {
-                // 更新现有记录
-                await tx.dailyStatistics.update({
-                  where: {
-                    id: existing[0].id,
-                  },
-                  data: {
-                    total_amount: totalAmount,
-                    payee_amount: payeeAmount,
-                    receiving_amount: receivingAmount,
-                    transaction_count: transactionCount,
-                    updated_at: new Date(),
-                  },
-                });
-                console.log(
-                  `✅ 更新统计记录: admin_id=${adminId}, date=${dateStr}, id=${existing[0].id}`,
-                );
-              } else {
-                // 如果找不到记录，可能是并发问题，记录日志但不抛出错误
-                console.warn(
-                  `⚠️ 警告：唯一约束冲突但未找到记录 admin_id=${adminId}, date=${dateStr}`,
-                );
-                // 尝试再次创建（可能其他事务已经提交）
-                try {
-                  await tx.dailyStatistics.create({
-                    data: {
-                      admin_id: adminId,
-                      admin_name: stats.admin_name,
-                      date: dateForDb,
-                      total_amount: totalAmount,
-                      payee_amount: payeeAmount,
-                      receiving_amount: receivingAmount,
-                      transaction_count: transactionCount,
-                    },
-                  });
-                  console.log(
-                    `✅ 重试创建统计记录成功: admin_id=${adminId}, date=${dateStr}`,
-                  );
-                } catch (retryError: any) {
-                  console.error(
-                    `❌ 重试创建失败: admin_id=${adminId}, date=${dateStr}`,
-                    retryError,
-                  );
-                }
-              }
-            } else {
-              // 其他错误直接抛出
-              throw error;
-            }
-          }
+          // 4. 注意：此方法使用旧的统计字段结构，已不再写入数据库
+          // 新的统计方法请使用 getTodayAdminStatistics
+          // 这里只返回计算结果，不写入数据库
+          console.log(
+            `⚠️ calculateDailyStatistics 使用旧字段结构，已弃用。请使用 getTodayAdminStatistics 方法。`,
+          );
         }
       },
       {
@@ -329,14 +255,20 @@ export class StatisticsService {
       },
     });
 
+    // 返回新字段结构的数据
     return statistics.map((stat) => ({
       admin_id: stat.admin_id,
       admin_name: stat.admin_name,
       date: stat.date.toISOString().split('T')[0],
-      total_amount: Number(stat.total_amount),
-      payee_amount: Number(stat.payee_amount),
-      receiving_amount: Number(stat.receiving_amount),
-      transaction_count: stat.transaction_count,
+      role: stat.role,
+      new_in_stock_amount: Number(stat.new_in_stock_amount),
+      cleared_off_amount: Number(stat.cleared_off_amount),
+      total_received: Number(stat.total_received),
+      total_unpaid: Number(stat.total_unpaid),
+      total_handling_fee: Number(stat.total_handling_fee),
+      total_fines: Number(stat.total_fines),
+      negotiated_count: stat.negotiated_count,
+      blacklist_count: stat.blacklist_count,
     }));
   }
 
@@ -409,26 +341,37 @@ export class StatisticsService {
     });
 
     if (!statistic) {
-      // 如果当天数据不存在，返回空数据
+      // 如果当天数据不存在，返回空数据（使用新字段结构）
       return {
         admin_id: adminId,
         admin_name: '',
         date: businessDate.toISOString().split('T')[0],
-        total_amount: 0,
-        payee_amount: 0,
-        receiving_amount: 0,
-        transaction_count: 0,
+        role: 'collector',
+        new_in_stock_amount: 0,
+        cleared_off_amount: 0,
+        total_received: 0,
+        total_unpaid: 0,
+        total_handling_fee: 0,
+        total_fines: 0,
+        negotiated_count: 0,
+        blacklist_count: 0,
       };
     }
 
+    // 返回新字段结构的数据
     return {
       admin_id: statistic.admin_id,
       admin_name: statistic.admin_name,
       date: statistic.date.toISOString().split('T')[0],
-      total_amount: Number(statistic.total_amount),
-      payee_amount: Number(statistic.payee_amount),
-      receiving_amount: Number(statistic.receiving_amount),
-      transaction_count: statistic.transaction_count,
+      role: statistic.role,
+      new_in_stock_amount: Number(statistic.new_in_stock_amount),
+      cleared_off_amount: Number(statistic.cleared_off_amount),
+      total_received: Number(statistic.total_received),
+      total_unpaid: Number(statistic.total_unpaid),
+      total_handling_fee: Number(statistic.total_handling_fee),
+      total_fines: Number(statistic.total_fines),
+      negotiated_count: statistic.negotiated_count,
+      blacklist_count: statistic.blacklist_count,
     };
   }
 
@@ -478,7 +421,7 @@ export class StatisticsService {
         stats.totalAmount +=
           Number(acc.receiving_amount || 0) -
           Number(acc.company_cost || 0) +
-          Number(acc.total_fines || 0);
+          Number(acc.handling_fee || 0);
 
         // 已收金额 = Σ(receiving_amount)（包含罚金）
         stats.totalReceivingAmount += Number(acc.receiving_amount || 0);
@@ -714,6 +657,305 @@ export class StatisticsService {
       stats.blacklistCount = blacklistLoans.length;
 
       delete stats.loanAccounts; // Clean up
+    }
+
+    const result = Array.from(adminStats.values());
+
+    // 将统计数据写入数据库
+    const businessDate = new Date(businessDayStart);
+    businessDate.setHours(0, 0, 0, 0);
+
+    // 将统计数据写入数据库（使用upsert模式处理并发问题）
+    try {
+      for (const stat of result) {
+        try {
+          // 先尝试创建，如果记录已存在则更新
+          await this.prisma.dailyStatistics.create({
+            data: {
+              admin_id: stat.admin_id,
+              admin_name: stat.admin_name,
+              date: businessDate,
+              role: stat.role,
+              new_in_stock_amount: stat.newInStockAmount,
+              cleared_off_amount: stat.clearedOffAmount,
+              total_received: stat.totalReceived,
+              total_unpaid: stat.totalUnpaid,
+              total_handling_fee: stat.totalHandlingFee,
+              total_fines: stat.totalFines,
+              negotiated_count: stat.negotiatedCount,
+              blacklist_count: stat.blacklistCount,
+            },
+          });
+        } catch (createError: any) {
+          // 如果是唯一约束冲突（P2002），说明记录已存在，则更新
+          if (createError?.code === 'P2002') {
+            // 查找现有记录并更新
+            const existing = await this.prisma.dailyStatistics.findFirst({
+              where: {
+                admin_id: stat.admin_id,
+                date: businessDate,
+                role: stat.role,
+              },
+            });
+
+            if (existing) {
+              await this.prisma.dailyStatistics.update({
+                where: { id: existing.id },
+                data: {
+                  admin_name: stat.admin_name,
+                  new_in_stock_amount: stat.newInStockAmount,
+                  cleared_off_amount: stat.clearedOffAmount,
+                  total_received: stat.totalReceived,
+                  total_unpaid: stat.totalUnpaid,
+                  total_handling_fee: stat.totalHandlingFee,
+                  total_fines: stat.totalFines,
+                  negotiated_count: stat.negotiatedCount,
+                  blacklist_count: stat.blacklistCount,
+                },
+              });
+            }
+          } else {
+            // 其他错误重新抛出
+            throw createError;
+          }
+        }
+      }
+    } catch (error) {
+      console.error('保存统计数据到数据库失败:', error);
+      // 继续返回结果，即使保存失败
+    }
+
+    return result;
+  }
+
+  // 获取昨日管理员统计数据
+  async getYesterdayAdminStatistics(): Promise<any[]> {
+    // 获取昨天的业务日期
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStart = this.getBusinessDayStart(yesterday);
+    const yesterdayEnd = this.getBusinessDayEnd(yesterday);
+
+    // 先尝试从数据库读取
+    const yesterdayDate = new Date(yesterdayStart);
+    yesterdayDate.setHours(0, 0, 0, 0);
+
+    const dbStats = await this.prisma.dailyStatistics.findMany({
+      where: {
+        date: yesterdayDate,
+      },
+    });
+
+    // 如果数据库中有数据，直接返回
+    if (dbStats.length > 0) {
+      return dbStats.map((stat) => ({
+        admin_id: stat.admin_id,
+        admin_name: stat.admin_name,
+        role: stat.role,
+        newInStockAmount: Number(stat.new_in_stock_amount),
+        clearedOffAmount: Number(stat.cleared_off_amount),
+        totalReceived: Number(stat.total_received),
+        totalUnpaid: Number(stat.total_unpaid),
+        totalHandlingFee: Number(stat.total_handling_fee),
+        totalFines: Number(stat.total_fines),
+        negotiatedCount: stat.negotiated_count,
+        blacklistCount: stat.blacklist_count,
+      }));
+    }
+
+    // 如果数据库中没有数据，重新计算（复用getTodayAdminStatistics的逻辑，但使用昨天的日期）
+    const roles = await this.prisma.loanAccountRole.findMany({
+      where: {
+        role_type: { in: ['collector', 'risk_controller'] },
+      },
+      include: {
+        admin: true,
+        loan_account: true,
+      },
+    });
+
+    const adminStats = new Map<string, any>();
+
+    for (const role of roles) {
+      const key = `${role.admin_id}_${role.role_type}`;
+      if (!adminStats.has(key)) {
+        adminStats.set(key, {
+          admin_id: role.admin_id,
+          admin_name: role.admin.username,
+          role: role.role_type,
+          newInStockAmount: 0,
+          clearedOffAmount: 0,
+          totalReceived: 0,
+          totalUnpaid: 0,
+          totalHandlingFee: 0,
+          totalFines: 0,
+          negotiatedCount: 0,
+          blacklistCount: 0,
+          loanAccounts: new Set<string>(),
+        });
+      }
+      adminStats.get(key).loanAccounts.add(role.loan_account_id);
+    }
+
+    for (const [key, stats] of adminStats.entries()) {
+      const loanAccountIds: string[] = Array.from(
+        stats.loanAccounts as Set<string>,
+      );
+
+      // 1. 新增在库
+      const newLoanAccounts = await this.prisma.loanAccount.findMany({
+        where: {
+          id: { in: loanAccountIds },
+          due_start_date: {
+            gte: yesterdayStart,
+            lt: yesterdayEnd,
+          },
+        },
+        select: {
+          loan_amount: true,
+          handling_fee: true,
+        },
+      });
+      stats.newInStockAmount = newLoanAccounts.reduce(
+        (sum, acc) => sum + Number(acc.loan_amount),
+        0,
+      );
+      stats.totalHandlingFee = newLoanAccounts.reduce(
+        (sum, acc) => sum + Number(acc.handling_fee),
+        0,
+      );
+
+      // 2. 离库结清
+      const yesterdayRepaymentRecords =
+        await this.prisma.repaymentRecord.findMany({
+          where: {
+            loan_id: { in: loanAccountIds },
+            paid_at: {
+              gte: yesterdayStart,
+              lt: yesterdayEnd,
+            },
+          },
+          select: {
+            loan_id: true,
+          },
+          distinct: ['loan_id'],
+        });
+
+      const yesterdayRepaymentLoanIds = yesterdayRepaymentRecords.map(
+        (r) => r.loan_id,
+      );
+      if (yesterdayRepaymentLoanIds.length > 0) {
+        const settledLoans = await this.prisma.loanAccount.findMany({
+          where: {
+            id: { in: yesterdayRepaymentLoanIds },
+            status: 'settled',
+            updated_at: {
+              gte: yesterdayStart,
+              lt: yesterdayEnd,
+            },
+          },
+          select: {
+            loan_amount: true,
+          },
+        });
+        stats.clearedOffAmount = settledLoans.reduce(
+          (sum, acc) => sum + Number(acc.loan_amount),
+          0,
+        );
+      }
+
+      // 3. 已收
+      const yesterdayReceivedRecords =
+        await this.prisma.repaymentRecord.findMany({
+          where: {
+            loan_id: { in: loanAccountIds },
+            paid_at: {
+              gte: yesterdayStart,
+              lt: yesterdayEnd,
+            },
+          },
+          select: {
+            paid_capital: true,
+            paid_interest: true,
+            paid_fines: true,
+          },
+        });
+      stats.totalReceived = yesterdayReceivedRecords.reduce(
+        (sum, record) =>
+          sum +
+          Number(record.paid_capital || 0) +
+          Number(record.paid_interest || 0) +
+          Number(record.paid_fines || 0),
+        0,
+      );
+
+      // 4. 罚金
+      stats.totalFines = yesterdayReceivedRecords.reduce(
+        (sum, record) => sum + Number(record.paid_fines || 0),
+        0,
+      );
+
+      // 5. 未收
+      const pendingLoanAccounts = await this.prisma.loanAccount.findMany({
+        where: {
+          id: { in: loanAccountIds },
+          status: 'pending',
+        },
+        select: {
+          id: true,
+        },
+      });
+      const pendingLoanAccountIds = pendingLoanAccounts.map((l) => l.id);
+      const yesterdaySchedules = await this.prisma.repaymentSchedule.findMany({
+        where: {
+          loan_id: { in: pendingLoanAccountIds },
+          due_start_date: {
+            gte: yesterdayStart,
+            lt: yesterdayEnd,
+          },
+        },
+        select: {
+          due_amount: true,
+          paid_capital: true,
+          paid_interest: true,
+        },
+      });
+      stats.totalUnpaid = yesterdaySchedules.reduce(
+        (sum, schedule) =>
+          sum +
+          (Number(schedule.due_amount || 0) -
+            Number(schedule.paid_capital || 0) -
+            Number(schedule.paid_interest || 0)),
+        0,
+      );
+
+      // 6. 协商
+      const negotiatedLoans = await this.prisma.loanAccount.findMany({
+        where: {
+          id: { in: loanAccountIds },
+          status: 'negotiated',
+          status_changed_at: {
+            gte: yesterdayStart,
+            lt: yesterdayEnd,
+          },
+        },
+      });
+      stats.negotiatedCount = negotiatedLoans.length;
+
+      // 7. 黑名单
+      const blacklistLoans = await this.prisma.loanAccount.findMany({
+        where: {
+          id: { in: loanAccountIds },
+          status: 'blacklist',
+          status_changed_at: {
+            gte: yesterdayStart,
+            lt: yesterdayEnd,
+          },
+        },
+      });
+      stats.blacklistCount = blacklistLoans.length;
+
+      delete stats.loanAccounts;
     }
 
     return Array.from(adminStats.values());

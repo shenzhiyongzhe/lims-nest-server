@@ -75,10 +75,6 @@ export class CreateLoanAccountDto {
 
   @IsNumber()
   @IsPositive()
-  payee_id: number;
-
-  @IsNumber()
-  @IsPositive()
   lender_id: number;
 
   @IsNumber()

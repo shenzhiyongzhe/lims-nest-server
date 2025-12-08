@@ -88,6 +88,14 @@ export class StatisticsController {
     return ResponseHelper.success(statistics, '今日管理员统计数据获取成功');
   }
 
+  @Get('admin/yesterday')
+  @UseGuards(RolesGuard)
+  @Roles(ManagementRoles.管理员, ManagementRoles.风控人, ManagementRoles.负责人)
+  async getYesterdayAdminStatistics() {
+    const statistics = await this.statisticsService.getYesterdayAdminStatistics();
+    return ResponseHelper.success(statistics, '昨日管理员统计数据获取成功');
+  }
+
   @Get('collector-report')
   async getCollectorReport(@CurrentUser() user: { id: number; role: string }) {
     // 根据用户角色确定查询类型

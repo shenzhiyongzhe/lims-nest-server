@@ -177,7 +177,6 @@ export class LoanAccountsService {
           receiving_amount: data.receiving_amount,
           risk_controller_id: data.risk_controller_id,
           collector_id: data.collector_id,
-          payee_id: data.payee_id,
           lender_id: data.lender_id,
           company_cost: data.company_cost,
           handling_fee: data.handling_fee as number,
@@ -268,11 +267,6 @@ export class LoanAccountsService {
           },
           {
             loan_account_id: created.id,
-            admin_id: data.payee_id,
-            role_type: 'payee',
-          },
-          {
-            loan_account_id: created.id,
             admin_id: data.lender_id,
             role_type: 'lender',
           },
@@ -302,12 +296,6 @@ export class LoanAccountsService {
           },
         },
         collector: {
-          select: {
-            id: true,
-            username: true,
-          },
-        },
-        payee: {
           select: {
             id: true,
             username: true,
@@ -463,7 +451,6 @@ export class LoanAccountsService {
         user: true,
         risk_controller: { select: { id: true, username: true } },
         collector: { select: { id: true, username: true } },
-        payee: { select: { id: true, username: true } },
         lender: { select: { id: true, username: true } },
       },
       orderBy: [{ user_id: 'asc' }, { apply_times: 'asc' }],
@@ -566,9 +553,6 @@ export class LoanAccountsService {
       if (data.collector_id !== undefined) {
         updateData.collector_id = data.collector_id;
       }
-      if (data.payee_id !== undefined) {
-        updateData.payee_id = data.payee_id;
-      }
       if (data.lender_id !== undefined) {
         updateData.lender_id = data.lender_id;
       }
@@ -592,12 +576,6 @@ export class LoanAccountsService {
             },
           },
           collector: {
-            select: {
-              id: true,
-              username: true,
-            },
-          },
-          payee: {
             select: {
               id: true,
               username: true,
@@ -682,7 +660,6 @@ export class LoanAccountsService {
       if (
         data.risk_controller_id !== undefined ||
         data.collector_id !== undefined ||
-        data.payee_id !== undefined ||
         data.lender_id !== undefined
       ) {
         // 删除旧的角色记录
@@ -718,22 +695,6 @@ export class LoanAccountsService {
           });
         }
 
-        if (data.payee_id !== undefined) {
-          await tx.loanAccountRole.deleteMany({
-            where: {
-              loan_account_id: id,
-              role_type: 'payee',
-            },
-          });
-          await tx.loanAccountRole.create({
-            data: {
-              loan_account_id: id,
-              admin_id: data.payee_id,
-              role_type: 'payee',
-            },
-          });
-        }
-
         if (data.lender_id !== undefined) {
           await tx.loanAccountRole.deleteMany({
             where: {
@@ -764,12 +725,6 @@ export class LoanAccountsService {
             },
           },
           collector: {
-            select: {
-              id: true,
-              username: true,
-            },
-          },
-          payee: {
             select: {
               id: true,
               username: true,
@@ -934,53 +889,93 @@ export class LoanAccountsService {
         // = 已还本金 + 已还利息（截至结清前）+ 提前结清的本金 + 提前结清的利息
         receivingAmount = prevTotalReceiving + manualCapital + manualInterest;
 
-        // 若有结清/拉黑金额，写入一条还款记录 + 完成订单
+        // 若有结清/拉黑金额，创建或更新一条提前结清的还款记录 + 完成订单
         if (settlementAmount > 0) {
-          // 获取用户与收款人
+          // 获取用户
           const la = await tx.loanAccount.findUnique({
             where: { id },
-            select: { user_id: true, payee_id: true },
+            select: { user_id: true },
           });
           let payee = null as null | { id: number };
-          if (la?.payee_id) {
-            payee = await tx.payee.findFirst({
-              where: { admin_id: la.payee_id },
-              select: { id: true },
+
+          // 查找是否已存在提前结清的还款记录
+          const existingRecord = await tx.repaymentRecord.findFirst({
+            where: {
+              loan_id: id,
+              remark: '来源：提前结清',
+            },
+            include: {
+              order: true,
+            },
+          });
+
+          let orderId: string;
+
+          if (existingRecord) {
+            // 如果记录已存在，更新订单和还款记录
+            const newOrder = await tx.order.create({
+              data: {
+                customer_id: la!.user_id,
+                loan_id: id,
+                amount: settlementAmount,
+                payment_periods: 1,
+                payment_method: PaymentMethod.wechat_pay,
+                remark: '来源：提前结清',
+                status: OrderStatus.completed,
+                payee_id: payee?.id,
+                expires_at: new Date(),
+              },
+            });
+            orderId = newOrder.id;
+
+            // 更新还款记录
+            await tx.repaymentRecord.update({
+              where: { id: existingRecord.id },
+              data: {
+                paid_amount: settlementAmount,
+                paid_at: new Date(),
+                payee_id: payee?.id ?? 0,
+                order_id: orderId,
+                // 记录本次结清的本金和利息，便于后续统计
+                paid_capital: hasManualSettlement ? manualCapital : null,
+                paid_interest: hasManualSettlement ? manualInterest : null,
+                paid_fines: null,
+              },
+            });
+          } else {
+            // 如果记录不存在，创建新订单和还款记录
+            const order = await tx.order.create({
+              data: {
+                customer_id: la!.user_id,
+                loan_id: id,
+                amount: settlementAmount,
+                payment_periods: 1,
+                payment_method: PaymentMethod.wechat_pay,
+                remark: '来源：提前结清',
+                status: OrderStatus.completed,
+                payee_id: payee?.id,
+                expires_at: new Date(),
+              },
+            });
+
+            // 创建还款记录
+            await tx.repaymentRecord.create({
+              data: {
+                loan_id: id,
+                user_id: la!.user_id,
+                paid_amount: settlementAmount,
+                paid_at: new Date(),
+                payment_method: 'wechat_pay' as any,
+                payee_id: payee?.id ?? 0,
+                remark: '来源：提前结清',
+                order_id: order.id,
+                // 记录本次结清的本金和利息，便于后续统计
+                paid_capital: hasManualSettlement ? manualCapital : null,
+                paid_interest: hasManualSettlement ? manualInterest : null,
+                paid_fines: null,
+              },
             });
           }
-
-          // 创建已完成订单
-          const order = await tx.order.create({
-            data: {
-              customer_id: la!.user_id,
-              loan_id: id,
-              amount: settlementAmount,
-              payment_periods: 1,
-              payment_method: PaymentMethod.wechat_pay,
-              remark: '来源：提前结清',
-              status: OrderStatus.completed,
-              payee_id: payee?.id,
-              expires_at: new Date(),
-            },
-          });
-
-          // 创建还款记录
-          await tx.repaymentRecord.create({
-            data: {
-              loan_id: id,
-              user_id: la!.user_id,
-              paid_amount: settlementAmount,
-              paid_at: new Date(),
-              payment_method: 'wechat_pay' as any,
-              payee_id: payee?.id ?? 0,
-              remark: '来源：提前结清',
-              order_id: order.id,
-              // 记录本次结清的本金和利息，便于后续统计
-              paid_capital: hasManualSettlement ? manualCapital : null,
-              paid_interest: hasManualSettlement ? manualInterest : null,
-              paid_fines: null,
-            },
-          });
         }
 
         // 更新贷款账户（不更新 repaid_periods，保持原值）
@@ -1044,12 +1039,6 @@ export class LoanAccountsService {
                 username: true,
               },
             },
-            payee: {
-              select: {
-                id: true,
-                username: true,
-              },
-            },
             lender: {
               select: {
                 id: true,
@@ -1089,12 +1078,6 @@ export class LoanAccountsService {
             },
           },
           collector: {
-            select: {
-              id: true,
-              username: true,
-            },
-          },
-          payee: {
             select: {
               id: true,
               username: true,

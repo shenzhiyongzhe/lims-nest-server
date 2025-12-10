@@ -43,13 +43,12 @@ export class ScheduleStatusService implements OnModuleInit {
       `Updating repayment schedule statuses at ${now.toISOString()}, todayStart: ${todayStart.toISOString()}`,
     );
 
-    // 激活：已到达开始时间且未到结束时间
+    // 激活：已到达开始时间（周期是一天，所以due_start_date是今天或之前）
     // 对于 Date 类型字段（@db.Date），Prisma 会将其作为 UTC 日期的 00:00:00 处理
     // 所以我们需要使用 UTC 日期进行比较
     const activeResult = await this.prisma.repaymentSchedule.updateMany({
       where: {
         due_start_date: { lte: now },
-        due_end_date: { gte: todayStart, lt: tomorrowStart }, // 结束日期 >= 今天且 < 明天，表示未过期
         paid_amount: { lt: 1 },
         status: { in: ['pending'] },
       },
@@ -57,12 +56,15 @@ export class ScheduleStatusService implements OnModuleInit {
     });
     this.logger.log(`Activated ${activeResult.count} repayment schedules`);
 
-    // 逾期：超过结束日期未支付（due_end_date < 今天的开始时间）
-    // 由于 due_end_date 是 Date 类型，存储为 UTC 00:00:00，所以直接与 todayStart 比较即可
+    // 逾期：周期是一天，所以due_start_date + 1天 < 今天，即due_start_date < 昨天
+    // 由于周期是一天，前天到期的就是昨天逾期
+    const yesterdayStart = new Date(todayStart);
+    yesterdayStart.setUTCDate(yesterdayStart.getUTCDate() - 1);
+
     const overdueResult = await this.prisma.repaymentSchedule.updateMany({
       where: {
-        due_end_date: { lt: todayStart }, // 结束日期 < 今天，表示已过期
-        status: { in: ['pending'] },
+        due_start_date: { lt: yesterdayStart }, // 开始日期 < 昨天，表示已逾期（因为周期是一天）
+        status: { in: ['pending', 'active'] },
       },
       data: { status: 'overdue' as RepaymentScheduleStatus },
     });

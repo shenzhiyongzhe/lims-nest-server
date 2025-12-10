@@ -93,7 +93,6 @@ export class RepaymentSchedulesController {
         loan_id: oldSchedule.loan_id,
         period: oldSchedule.period,
         due_start_date: oldSchedule.due_start_date,
-        due_end_date: oldSchedule.due_end_date,
         due_amount: oldSchedule.due_amount,
         capital: oldSchedule.capital,
         interest: oldSchedule.interest,
@@ -113,42 +112,6 @@ export class RepaymentSchedulesController {
 
     // 处理日期字段：将日期字符串转换为 Date（不包含时间）
     // 使用 UTC 时间创建日期，避免时区转换导致的日期偏移
-    if (data.due_end_date) {
-      // 如果传入的是日期字符串（YYYY-MM-DD），转换为 Date
-      if (
-        typeof data.due_end_date === 'string' &&
-        data.due_end_date.match(/^\d{4}-\d{2}-\d{2}$/)
-      ) {
-        // 使用 UTC 时间创建日期，确保日期部分不会因时区转换而改变
-        const [year, month, day] = data.due_end_date.split('-').map(Number);
-        const date = new Date(Date.UTC(year, month - 1, day));
-        updateData.due_end_date = date;
-      } else if (data.due_end_date instanceof Date) {
-        // 转换为 UTC 时间的午夜
-        const date = new Date(
-          Date.UTC(
-            data.due_end_date.getUTCFullYear(),
-            data.due_end_date.getUTCMonth(),
-            data.due_end_date.getUTCDate(),
-          ),
-        );
-        updateData.due_end_date = date;
-      } else {
-        const date = new Date(data.due_end_date);
-        if (!isNaN(date.getTime())) {
-          updateData.due_end_date = new Date(
-            Date.UTC(
-              date.getUTCFullYear(),
-              date.getUTCMonth(),
-              date.getUTCDate(),
-            ),
-          );
-        } else {
-          updateData.due_end_date = date;
-        }
-      }
-    }
-
     if (data.due_start_date) {
       if (
         typeof data.due_start_date === 'string' &&
@@ -234,7 +197,6 @@ export class RepaymentSchedulesController {
       loan_id: updatedSchedule.loan_id,
       period: updatedSchedule.period,
       due_start_date: updatedSchedule.due_start_date,
-      due_end_date: updatedSchedule.due_end_date,
       due_amount: updatedSchedule.due_amount,
       capital: updatedSchedule.capital,
       interest: updatedSchedule.interest,
@@ -269,7 +231,6 @@ export class RepaymentSchedulesController {
         loan_id: oldSchedule.loan_id,
         period: oldSchedule.period,
         due_start_date: oldSchedule.due_start_date,
-        due_end_date: oldSchedule.due_end_date,
         due_amount: oldSchedule.due_amount,
         capital: oldSchedule.capital,
         interest: oldSchedule.interest,
@@ -291,7 +252,6 @@ export class RepaymentSchedulesController {
       loan_id: resetSchedule.loan_id,
       period: resetSchedule.period,
       due_start_date: resetSchedule.due_start_date,
-      due_end_date: resetSchedule.due_end_date,
       due_amount: resetSchedule.due_amount,
       capital: resetSchedule.capital,
       interest: resetSchedule.interest,

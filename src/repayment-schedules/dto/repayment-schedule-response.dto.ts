@@ -36,7 +36,6 @@ export class RepaymentScheduleResponseDto {
   loan_id: string;
   period: number;
   due_start_date: Date;
-  due_end_date: Date;
   due_amount: number;
   capital?: number;
   interest?: number;

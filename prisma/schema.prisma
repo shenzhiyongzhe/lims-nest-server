@@ -143,7 +143,6 @@ model RepaymentSchedule {
   loan_id             String
   period              Int
   due_start_date      DateTime @db.Date
-  due_end_date        DateTime @db.Date
   due_amount          Decimal                 @db.Decimal(10, 2)
   capital             Decimal?                @db.Decimal(10, 2)
   interest            Decimal?                @db.Decimal(10, 2)

@@ -202,6 +202,7 @@ export class LoanAccountsService {
       const rows = Array.from({ length: periods }).map((_, idx) => {
         // 计算每期的开始日期：第一期使用 due_start_date，后续每期依次往后延
         // 使用 UTC 时间计算，避免时区转换问题
+        // 周期是一天，所以每期的due_start_date就是开始日期
         const baseDate = new Date(created.due_start_date);
         const d = new Date(
           Date.UTC(
@@ -210,8 +211,6 @@ export class LoanAccountsService {
             baseDate.getUTCDate() + idx,
           ),
         );
-        // 结束日期：当天（Date 类型，不包含时间）
-        const end = new Date(d);
 
         // 计算本期本金：前 n-1 期使用固定每期本金，最后一期取剩余本金
         let curCapital = 0;
@@ -232,13 +231,12 @@ export class LoanAccountsService {
         // 根据日期判断状态：如果第一期是今天，状态应该是 active
         let scheduleStatus: RepaymentScheduleStatus = 'pending';
         // 第一期：如果开始日期是今天，状态为 active
-        scheduleStatus = this.determineScheduleStatus(end, 'pending');
+        scheduleStatus = this.determineScheduleStatus(d, 'pending');
 
         return {
           loan_id: created.id,
           period: idx + 1,
           due_start_date: d,
-          due_end_date: end,
           due_amount: dueAmount,
           capital: curCapital,
           interest: perInterest || null,
@@ -629,18 +627,15 @@ export class LoanAccountsService {
               ),
             );
 
-            // 计算新的结束日期：当天（Date 类型，不包含时间）
-            const newEndDate = new Date(newStartDate);
-
             // 获取当前还款计划的状态，用于判断新状态
             const currentSchedule = await tx.repaymentSchedule.findUnique({
               where: { id: schedule.id },
               select: { status: true },
             });
 
-            // 根据新的日期判断应该的状态
+            // 根据新的日期判断应该的状态（周期是一天，所以使用due_start_date）
             const newStatus = this.determineScheduleStatus(
-              newEndDate,
+              newStartDate,
               currentSchedule?.status || 'pending',
             );
 
@@ -648,7 +643,6 @@ export class LoanAccountsService {
               where: { id: schedule.id },
               data: {
                 due_start_date: newStartDate,
-                due_end_date: newEndDate,
                 status: newStatus,
               },
             });

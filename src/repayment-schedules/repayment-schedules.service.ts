@@ -75,7 +75,6 @@ export class RepaymentSchedulesService {
           paid_interest: true,
           fines: true,
           status: true,
-          due_end_date: true,
           paid_amount: true,
         },
       });
@@ -491,7 +490,7 @@ export class RepaymentSchedulesService {
   ): Promise<RepaymentSchedule[]> {
     const now = new Date();
     const today = new Date(now);
-    today.setHours(6, 0, 0, 0);
+    today.setHours(0, 0, 0, 0);
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
@@ -500,10 +499,12 @@ export class RepaymentSchedulesService {
 
     // 如果查询逾期记录，使用和统计逻辑一致的查询方式
     if (status === 'overdue') {
-      // 逾期：due_end_date < 今天的开始时间 且 未完全支付
+      // 逾期：周期是一天，所以due_start_date + 1天 < 今天，即due_start_date < 昨天
       const todayStart = new Date(now);
       todayStart.setHours(0, 0, 0, 0);
-      whereClause.due_end_date = { lt: todayStart };
+      const yesterdayStart = new Date(todayStart);
+      yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+      whereClause.due_start_date = { lt: yesterdayStart };
 
       // 如果有adminId，需要过滤该collector负责的loan accounts
       if (adminId) {
@@ -609,7 +610,6 @@ export class RepaymentSchedulesService {
       loan_id: schedule.loan_id,
       period: schedule.period,
       due_start_date: schedule.due_start_date,
-      due_end_date: schedule.due_end_date,
       due_amount: Number(schedule.due_amount),
       capital: schedule.capital ? Number(schedule.capital) : undefined,
       interest: schedule.interest ? Number(schedule.interest) : undefined,

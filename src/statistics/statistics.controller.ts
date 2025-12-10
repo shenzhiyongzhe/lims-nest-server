@@ -19,34 +19,15 @@ export class StatisticsController {
     @Query() query: GetStatisticsDto,
     @CurrentUser() user: { id: number; role: string },
   ) {
-    // 检查用户角色：collector和risk_controller只能获取当天数据，无需日期范围
+    // 检查用户角色：collector和risk_controller获取详细统计数据
     if (user.role === '负责人' || user.role === '风控人') {
-      // 使用业务日期：6点后算当天，6点前算前一天
-      const now = new Date();
-      // 获取业务日期（6点前算前一天）
-      const businessDate = new Date(now);
-      if (now.getHours() < 6) {
-        businessDate.setDate(now.getDate() - 1);
-      }
-      businessDate.setHours(0, 0, 0, 0);
-
-      const existing = await this.statisticsService.checkStatisticsExists(
-        user.id,
-        businessDate,
-      );
-      if (!existing) {
-        // 异步触发统计计算，不阻塞请求
-        this.statisticsService
-          .calculateDailyStatistics(businessDate)
-          .catch((err) => {
-            console.error('自动触发统计计算失败:', err);
-          });
-      }
-
-      const statistics = await this.statisticsService.getCollectorStatistics(
-        user.id,
-      );
-      return ResponseHelper.success([statistics], '统计数据获取成功');
+      const roleType = user.role === '负责人' ? 'collector' : 'risk_controller';
+      const statistics =
+        await this.statisticsService.getCollectorDetailedStatistics(
+          user.id,
+          roleType,
+        );
+      return ResponseHelper.success(statistics, '统计数据获取成功');
     }
 
     // 管理员可以使用日期范围
@@ -92,7 +73,8 @@ export class StatisticsController {
   @UseGuards(RolesGuard)
   @Roles(ManagementRoles.管理员, ManagementRoles.风控人, ManagementRoles.负责人)
   async getYesterdayAdminStatistics() {
-    const statistics = await this.statisticsService.getYesterdayAdminStatistics();
+    const statistics =
+      await this.statisticsService.getYesterdayAdminStatistics();
     return ResponseHelper.success(statistics, '昨日管理员统计数据获取成功');
   }
 
@@ -120,22 +102,6 @@ export class StatisticsController {
 
     return ResponseHelper.success(
       `已计算 ${date} 的统计数据`,
-      '统计数据计算成功',
-    );
-  }
-
-  @Post('calculate-range')
-  async calculateStatisticsRange(
-    @Body() body: { startDate: string; endDate: string },
-  ) {
-    const { startDate, endDate } = body;
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-
-    await this.statisticsService.calculateMissingStatistics(start, end);
-
-    return ResponseHelper.success(
-      `已计算 ${startDate} 到 ${endDate} 的统计数据`,
       '统计数据计算成功',
     );
   }

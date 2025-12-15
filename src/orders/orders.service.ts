@@ -408,10 +408,19 @@ export class OrdersService {
   /**
    * 获取审核订单列表
    */
-  async getReviewOrders(adminId: number, status?: OrderStatus) {
+  async getReviewOrders(adminId: number, status?: OrderStatus, date?: string) {
     const where: Prisma.OrderWhereInput = {
       status: status ? status : { in: ['grabbed', 'completed'] },
     };
+
+    // 如果提供了日期，按日期筛选（基于updated_at，因为审核时订单状态会更新）
+    if (date) {
+      const targetDate = new Date(date);
+      targetDate.setHours(0, 0, 0, 0);
+      const endDate = new Date(targetDate);
+      endDate.setDate(endDate.getDate() + 1);
+      where.updated_at = { gte: targetDate, lt: endDate };
+    }
 
     const role = await this.getAdminRole(adminId);
     // 只有管理员可以查看所有订单，收款人只能查看自己的订单
@@ -519,5 +528,33 @@ export class OrdersService {
 
       return updatedOrder;
     });
+  }
+
+  /**
+   * 删除订单
+   */
+  async deleteOrder(adminId: number, orderId: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+    });
+
+    if (!order) {
+      throw new NotFoundException('订单不存在');
+    }
+
+    const role = await this.getAdminRole(adminId);
+    // 收款人只能删除自己的订单
+    if (role === '收款人') {
+      const payeeId = await this.getPayeeIdByAdmin(adminId);
+      if (!payeeId || order.payee_id !== payeeId) {
+        throw new ForbiddenException('无权限删除此订单');
+      }
+    }
+
+    await this.prisma.order.delete({
+      where: { id: orderId },
+    });
+
+    return { success: true };
   }
 }

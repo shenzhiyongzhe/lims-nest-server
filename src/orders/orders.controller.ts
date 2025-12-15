@@ -3,8 +3,10 @@ import {
   Get,
   Post,
   Put,
+  Delete,
   Query,
   Body,
+  Param,
   UseGuards,
 } from '@nestjs/common';
 import { OrdersService } from './orders.service';
@@ -86,8 +88,13 @@ export class OrdersController {
   async getReviewOrders(
     @CurrentUser() user: { id: number },
     @Query('status') status?: OrderStatus,
+    @Query('date') date?: string,
   ): Promise<ApiResponseDto> {
-    const orders = await this.ordersService.getReviewOrders(user.id, status);
+    const orders = await this.ordersService.getReviewOrders(
+      user.id,
+      status,
+      date,
+    );
     return ResponseHelper.success(orders, '获取审核订单成功');
   }
 
@@ -110,5 +117,14 @@ export class OrdersController {
       body.actual_paid_amount,
     );
     return ResponseHelper.success(updated, '审核成功');
+  }
+
+  @Delete(':id')
+  async deleteOrder(
+    @CurrentUser() user: { id: number },
+    @Param('id') id: string,
+  ): Promise<ApiResponseDto> {
+    await this.ordersService.deleteOrder(user.id, id);
+    return ResponseHelper.success(null, '删除订单成功');
   }
 }

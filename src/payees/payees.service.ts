@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreatePayeeDto } from './create-payee.dto';
+import { PayeeDailyStatisticsService } from '../payee-daily-statistics/payee-daily-statistics.service';
 import { Payee, PaymentMethod, QrCode } from '@prisma/client';
 import { UploadResponseDto } from './dto/upload-response.dto';
 import { writeFile, mkdir } from 'fs/promises';
@@ -13,7 +14,10 @@ import { existsSync } from 'fs';
 
 @Injectable()
 export class PayeesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly payeeDailyStatisticsService: PayeeDailyStatisticsService,
+  ) {}
 
   create(data: CreatePayeeDto): Promise<Payee> {
     const payload: CreatePayeeDto = {
@@ -171,5 +175,30 @@ export class PayeesService {
   }
   deleteQRCode(id: number): Promise<QrCode | null> {
     return this.prisma.qrCode.delete({ where: { id } });
+  }
+
+  async getMyStatistics(adminId: number) {
+    const payee = await this.prisma.payee.findFirst({
+      where: { admin_id: adminId },
+      select: { id: true, payment_limit: true },
+    });
+
+    if (!payee) {
+      throw new NotFoundException('收款人不存在');
+    }
+
+    const statistics =
+      await this.payeeDailyStatisticsService.getTodayAndYesterdayStatistics(
+        payee.id,
+      );
+
+    const dailyBalance = payee.payment_limit - statistics.today.daily_total;
+
+    return {
+      daily_balance: dailyBalance,
+      today_amount: statistics.today.daily_total,
+      yesterday_amount: statistics.yesterday.daily_total,
+      payment_limit: payee.payment_limit,
+    };
   }
 }

@@ -146,4 +146,13 @@ export class PayeesController {
     }
     return ResponseHelper.success(qrcode, '删除二维码成功');
   }
+
+  @UseGuards(AuthGuard, RolesGuard)
+  @Get('me/statistics')
+  async getMyStatistics(
+    @CurrentUser() user: { id: number },
+  ): Promise<ApiResponseDto> {
+    const statistics = await this.payeesService.getMyStatistics(user.id);
+    return ResponseHelper.success(statistics, '获取统计信息成功');
+  }
 }

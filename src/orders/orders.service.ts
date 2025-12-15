@@ -8,16 +8,23 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { OrderStatus } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 import { CreateOrderDto } from './dto/create-order.dto';
+import { PayeeRankingService } from '../payee-ranking/payee-ranking.service';
+import { PayeeDailyStatisticsService } from '../payee-daily-statistics/payee-daily-statistics.service';
 import * as crypto from 'crypto';
 
 interface GetOrdersQuery {
   status?: OrderStatus;
   today?: boolean;
+  date?: string; // 日期字符串，格式：YYYY-MM-DD
 }
 
 @Injectable()
 export class OrdersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly payeeRankingService: PayeeRankingService,
+    private readonly payeeDailyStatisticsService: PayeeDailyStatisticsService,
+  ) {}
 
   private async getAdminRole(adminId: number): Promise<string> {
     const admin = await this.prisma.admin.findUnique({
@@ -39,12 +46,19 @@ export class OrdersService {
   }
 
   async getOrders(adminId: number, query: GetOrdersQuery) {
-    const { status, today = true } = query;
+    const { status, today = true, date } = query;
 
     const where: Prisma.OrderWhereInput = {};
     if (status) where.status = status;
 
-    if (today) {
+    if (date) {
+      // 如果指定了日期，按日期筛选（基于updated_at，因为审核时订单状态会更新）
+      const targetDate = new Date(date);
+      targetDate.setHours(0, 0, 0, 0);
+      const endDate = new Date(targetDate);
+      endDate.setDate(endDate.getDate() + 1);
+      where.updated_at = { gte: targetDate, lt: endDate };
+    } else if (today) {
       const start = new Date();
       start.setHours(0, 0, 0, 0);
       const end = new Date(start);
@@ -63,7 +77,15 @@ export class OrdersService {
 
     return this.prisma.order.findMany({
       where,
-      include: { customer: true },
+      include: {
+        customer: true,
+        payee: {
+          select: {
+            id: true,
+            username: true,
+          },
+        },
+      },
       orderBy: { created_at: 'desc' },
     });
   }
@@ -381,5 +403,121 @@ export class OrdersService {
       data: { status, updated_at: new Date() },
     });
     return simpleUpdated;
+  }
+
+  /**
+   * 获取审核订单列表
+   */
+  async getReviewOrders(adminId: number, status?: OrderStatus) {
+    const where: Prisma.OrderWhereInput = {
+      status: status ? status : { in: ['grabbed', 'completed'] },
+    };
+
+    const role = await this.getAdminRole(adminId);
+    // 只有管理员可以查看所有订单，收款人只能查看自己的订单
+    if (role === '收款人') {
+      const payeeId = await this.getPayeeIdByAdmin(adminId);
+      if (!payeeId) {
+        throw new BadRequestException('未绑定收款人');
+      }
+      where.payee_id = payeeId;
+    }
+
+    return this.prisma.order.findMany({
+      where,
+      include: {
+        customer: {
+          select: {
+            id: true,
+            username: true,
+            address: true,
+          },
+        },
+        payee: {
+          select: {
+            id: true,
+            username: true,
+          },
+        },
+      },
+      orderBy: { created_at: 'desc' },
+    });
+  }
+
+  /**
+   * 审核订单
+   */
+  async reviewOrder(
+    adminId: number,
+    orderId: string,
+    actualPaidAmount: number,
+  ) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        payee: true,
+      },
+    });
+
+    if (!order) {
+      throw new NotFoundException('订单不存在');
+    }
+
+    if (order.status !== 'grabbed') {
+      throw new BadRequestException('只能审核已抢单的订单');
+    }
+
+    if (!order.payee_id) {
+      throw new BadRequestException('订单未关联收款人');
+    }
+
+    if (actualPaidAmount <= 0) {
+      throw new BadRequestException('实付金额必须大于0');
+    }
+
+    // 获取管理员信息
+    const admin = await this.prisma.admin.findUnique({
+      where: { id: adminId },
+      select: { username: true },
+    });
+
+    if (!admin) {
+      throw new ForbiddenException('管理员不存在');
+    }
+
+    // 计算小数部分
+    const decimalPart = actualPaidAmount % 1;
+
+    return await this.prisma.$transaction(async (tx) => {
+      // 1. 更新订单状态和实付金额
+      const updatedOrder = await tx.order.update({
+        where: { id: orderId },
+        data: {
+          status: 'completed',
+          actual_paid_amount: actualPaidAmount,
+          processed_by_admin_id: adminId,
+          processed_by_admin_name: admin.username,
+          updated_at: new Date(),
+        },
+      });
+
+      // 2. 更新排行榜（累加小数部分）
+      if (decimalPart > 0 && order.payee_id) {
+        await this.payeeRankingService.updateDecimalSum(
+          order.payee_id,
+          decimalPart,
+        );
+      }
+
+      // 3. 更新每日收款统计
+      if (order.payee_id) {
+        await this.payeeDailyStatisticsService.updateDailyStatistics(
+          order.payee_id,
+          actualPaidAmount,
+        );
+      }
+
+      return updatedOrder;
+    });
   }
 }

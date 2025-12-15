@@ -28,10 +28,12 @@ export class OrdersController {
     @CurrentUser() user: { id: number },
     @Query('status') status?: OrderStatus,
     @Query('today') today: string = 'true',
+    @Query('date') date?: string,
   ): Promise<ApiResponseDto> {
     const rows = await this.ordersService.getOrders(user.id, {
       status,
       today: today !== 'false',
+      date,
     });
     return ResponseHelper.success(rows, '获取订单成功');
   }
@@ -78,5 +80,35 @@ export class OrdersController {
       body.paid_amount,
     );
     return ResponseHelper.success(updated, '部分还清成功');
+  }
+
+  @Get('review')
+  async getReviewOrders(
+    @CurrentUser() user: { id: number },
+    @Query('status') status?: OrderStatus,
+  ): Promise<ApiResponseDto> {
+    const orders = await this.ordersService.getReviewOrders(user.id, status);
+    return ResponseHelper.success(orders, '获取审核订单成功');
+  }
+
+  @Post('review')
+  async reviewOrder(
+    @CurrentUser() user: { id: number },
+    @Body() body: { order_id: string; actual_paid_amount: number },
+  ): Promise<ApiResponseDto> {
+    if (!body.order_id || !body.actual_paid_amount) {
+      return ResponseHelper.error('缺少必要参数', 400);
+    }
+
+    if (body.actual_paid_amount <= 0) {
+      return ResponseHelper.error('实付金额必须大于0', 400);
+    }
+
+    const updated = await this.ordersService.reviewOrder(
+      user.id,
+      body.order_id,
+      body.actual_paid_amount,
+    );
+    return ResponseHelper.success(updated, '审核成功');
   }
 }

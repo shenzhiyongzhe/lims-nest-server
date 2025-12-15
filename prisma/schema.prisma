@@ -230,10 +230,12 @@ model Payee {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime? @updatedAt
 
-  admin            Admin?            @relation(fields: [admin_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  admin            Admin?                 @relation(fields: [admin_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
   qrcode           QrCode[]
   orders           Order[]
   repaymentRecords RepaymentRecord[]
+  ranking          PayeeRanking?
+  dailyStatistics  PayeeDailyStatistics[]
 
   @@map("payees")
 }
@@ -276,6 +278,8 @@ model Order {
   collected_by_type       CollectionSource @default(grabbed)
   processed_by_admin_id   Int?
   processed_by_admin_name String?          @db.VarChar(50)
+  grabbed_at              DateTime?
+  actual_paid_amount      Decimal?         @db.Decimal(10, 2)
 
   customer         User              @relation(fields: [customer_id], references: [id])
   payee            Payee?            @relation(fields: [payee_id], references: [id])
@@ -310,6 +314,33 @@ model DailyStatistics {
   @@index([date])
   @@index([admin_id])
   @@map("daily_statistics")
+}
+
+model PayeeRanking {
+  id         Int      @id @default(autoincrement())
+  payee_id   Int      @unique
+  decimal_sum Decimal  @default(0) @db.Decimal(10, 2)
+  updated_at DateTime @updatedAt
+
+  payee Payee @relation(fields: [payee_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@map("payee_rankings")
+}
+
+model PayeeDailyStatistics {
+  id           Int      @id @default(autoincrement())
+  payee_id     Int
+  date         DateTime @db.Date
+  daily_total  Decimal  @default(0) @db.Decimal(12, 2) // 每日收款总额
+  total_amount Decimal  @default(0) @db.Decimal(12, 2) // 累计收款总金额
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  payee Payee @relation(fields: [payee_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([payee_id, date])
+  @@index([payee_id, date])
+  @@map("payee_daily_statistics")
 }
 
 // Operation log types

@@ -18,6 +18,7 @@ import { StatisticsModule } from './statistics/statistics.module';
 import { RepaymentRecordsModule } from './repayment-records/repayment-records.module';
 import { LoanAccountRolesModule } from './loanAccountRoles/loanAccountRoles.module';
 import { OperationLogsModule } from './operation-logs/operation-logs.module';
+import { PayeeRankingModule } from './payee-ranking/payee-ranking.module';
 @Module({
   imports: [
     ScheduleModule.forRoot(),
@@ -39,6 +40,7 @@ import { OperationLogsModule } from './operation-logs/operation-logs.module';
     RepaymentRecordsModule,
     LoanAccountRolesModule,
     OperationLogsModule,
+    PayeeRankingModule,
   ],
   controllers: [AppController],
   providers: [AppService],

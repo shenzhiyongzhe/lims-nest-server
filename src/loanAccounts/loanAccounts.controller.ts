@@ -46,6 +46,8 @@ export class LoanAccountsController {
   @Get('grouped-by-user')
   async groupedByUser(
     @Query('status') status: LoanAccountStatus,
+    @Query('dateFilter') dateFilter: string, // 'today', 'yesterday', 'thisMonth', 'lastMonth', 'all'
+    @Query('specialFilter') specialFilter: string, // 'todayPaid', 'todayPending', 'yesterdayOverdue', 'todayActive', 'todayNegotiated', 'todayBlacklist', 'allBlacklist', 'thisMonthBlacklist', 'lastMonthBlacklist'
     @CurrentUser() user: { id: number; role: string },
   ): Promise<ApiResponseDto> {
     let statusArray: LoanAccountStatus[] = [];
@@ -59,6 +61,8 @@ export class LoanAccountsController {
     const rows = await this.loanAccountsService.findGroupedByUser(
       statusArray,
       user.id,
+      dateFilter,
+      specialFilter,
     );
     return ResponseHelper.success(rows, '按用户分组获取成功');
   }

@@ -146,9 +146,9 @@ export class EventsService {
       return { success: false, message: '收款人不存在' };
     }
 
-    const usedAmount = Number(todayAmount._sum.paid_amount || 0);
-    const remainingAmount = payee.payment_limit - usedAmount;
-    if (remainingAmount < Number(order.amount)) {
+    const orderAmount = Number(order.amount);
+    // 使用 remaining_limit 来判断是否足够
+    if (payee.remaining_limit < orderAmount) {
       return { success: false, message: '当日额度不足' };
     }
 
@@ -156,30 +156,55 @@ export class EventsService {
 
     try {
       const customerId = Number(order.customer_id);
-      await this.prisma.order.upsert({
-        where: { id },
-        update: {
-          payee_id: payeeId,
-          status: 'grabbed',
-          updated_at: new Date(),
-        },
-        create: {
-          id,
-          customer_id: customerId,
-          loan_id: order.loan_id,
-          amount: order.amount,
-          payment_periods: Number(order.payment_periods ?? 0),
-          payment_method: order.payment_method,
-          remark: order.remark ?? null,
-          status: 'grabbed',
-          payee_id: payeeId,
-          expires_at: new Date(Date.now() + 60 * 1000),
-        },
+      const grabbedAt = new Date();
+      // 使用事务确保订单创建和额度减少的原子性
+      await this.prisma.$transaction(async (tx) => {
+        await tx.order.upsert({
+          where: { id },
+          update: {
+            payee_id: payeeId,
+            status: 'grabbed',
+            grabbed_at: grabbedAt,
+            updated_at: grabbedAt,
+          },
+          create: {
+            id,
+            customer_id: customerId,
+            loan_id: order.loan_id,
+            amount: order.amount,
+            payment_periods: Number(order.payment_periods ?? 0),
+            payment_method: order.payment_method,
+            remark: order.remark ?? null,
+            status: 'grabbed',
+            payee_id: payeeId,
+            grabbed_at: grabbedAt,
+            expires_at: new Date(Date.now() + 60 * 1000),
+          },
+        });
+        // 减少剩余额度
+        await tx.payee.update({
+          where: { id: payeeId },
+          data: {
+            remaining_limit: {
+              decrement: orderAmount,
+            },
+          },
+        });
       });
     } catch (e) {
       // ignore
       console.log(e);
     }
+
+    // 获取订单的完整信息（包括expires_at和amount）
+    const orderDetails = await this.prisma.order.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        amount: true,
+        expires_at: true,
+      },
+    });
 
     const connectionId = this.customerConnections.get(order.customer_id);
     if (connectionId) {
@@ -189,6 +214,12 @@ export class EventsService {
           id,
           payeeId,
           payeeName: payee.username,
+          amount: orderDetails?.amount
+            ? Number(orderDetails.amount)
+            : Number(order.amount),
+          expires_at:
+            orderDetails?.expires_at?.toISOString() ||
+            new Date(Date.now() + 60 * 1000).toISOString(),
         },
       });
     }
@@ -226,6 +257,7 @@ export class EventsService {
         username: string;
         address?: string;
         payment_limit: number;
+        remaining_limit: number;
       };
       priority: number;
       delay: number;
@@ -267,33 +299,21 @@ export class EventsService {
         delay = 10_000;
       }
 
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const tomorrow = new Date(today);
-      tomorrow.setDate(tomorrow.getDate() + 1);
-
-      const todayAmount = await this.prisma.repaymentRecord.aggregate({
-        where: {
-          payee_id: payee.id,
-          paid_at: {
-            gte: today.toISOString(),
-            lt: tomorrow.toISOString(),
-          },
-        },
-        _sum: { paid_amount: true },
-      });
-
-      const usedAmount = Number(todayAmount._sum.paid_amount || 0);
-      const remainingAmount = payee.payment_limit - usedAmount;
-      if (remainingAmount < Number(amount)) {
+      // 使用 remaining_limit 来判断是否足够
+      if (payee.remaining_limit < Number(amount)) {
         continue;
       }
 
       if (delay === 0) delay = 30_000;
-      payeePriorities.push({ payee, priority, delay, remainingAmount });
+      payeePriorities.push({
+        payee,
+        priority,
+        delay,
+        remainingAmount: payee.remaining_limit,
+      });
 
       console.log(
-        `📊 收款人 ${payee.id} 优先级: ${priority}, 延迟: ${delay}ms, 剩余额度: ${remainingAmount}`,
+        `📊 收款人 ${payee.id} 优先级: ${priority}, 延迟: ${delay}ms, 剩余额度: ${payee.remaining_limit}`,
       );
     }
 
@@ -311,6 +331,18 @@ export class EventsService {
   }
 
   private async broadcastOrder(orderData: OrderPayload) {
+    // 检查订单是否已被抢单
+    const existingOrder = await this.prisma.order.findUnique({
+      where: { id: orderData.id },
+      select: { status: true },
+    });
+
+    // 如果订单已被抢单，不进行广播
+    if (existingOrder && existingOrder.status === 'grabbed') {
+      console.log(`⚠️ 订单 ${orderData.id} 已被抢单，跳过广播`);
+      return;
+    }
+
     const priorities = await this.calculatePayeePriority(orderData);
     // 使用 Promise.all 处理所有延迟发送的消息
     await Promise.all(
@@ -319,6 +351,19 @@ export class EventsService {
         console.log(`🔍 查找收款人 ${payee.id} 的连接ID:`, connectionId);
 
         if (connectionId) {
+          // 在发送前再次检查订单状态，防止延迟期间被抢单
+          const orderStatus = await this.prisma.order.findUnique({
+            where: { id: orderData.id },
+            select: { status: true },
+          });
+
+          if (orderStatus && orderStatus.status === 'grabbed') {
+            console.log(
+              `⚠️ 订单 ${orderData.id} 在延迟期间被抢单，跳过发送给收款人 ${payee.id}`,
+            );
+            return;
+          }
+
           const message = {
             type: 'new_order',
             data: {
@@ -362,8 +407,9 @@ export class EventsService {
       select: {
         id: true,
         loan_id: true,
-        customer_id: true,
         amount: true,
+        expires_at: true,
+        customer_id: true,
         status: true,
       },
     });

@@ -24,42 +24,6 @@ export class LoanAccountsService {
   ) {}
 
   /**
-   * 判断日期是否是今天（UTC 时间）
-   * @param date 要判断的日期
-   * @returns 是否是今天
-   */
-  private isToday(date: Date): boolean {
-    const now = new Date();
-    const todayStart = new Date(
-      Date.UTC(
-        now.getUTCFullYear(),
-        now.getUTCMonth(),
-        now.getUTCDate(),
-        0,
-        0,
-        0,
-        0,
-      ),
-    );
-    const tomorrowStart = new Date(todayStart);
-    tomorrowStart.setUTCDate(tomorrowStart.getUTCDate() + 1);
-
-    const dateUTC = new Date(
-      Date.UTC(
-        date.getUTCFullYear(),
-        date.getUTCMonth(),
-        date.getUTCDate(),
-        0,
-        0,
-        0,
-        0,
-      ),
-    );
-
-    return dateUTC >= todayStart && dateUTC < tomorrowStart;
-  }
-
-  /**
    * 判断日期是否已过期（UTC 时间）
    * @param date 要判断的日期
    * @returns 是否已过期
@@ -191,6 +155,7 @@ export class LoanAccountsService {
           status: data.status as LoanAccountStatus,
           repaid_periods: 0,
           created_by: createdBy,
+          note: data.remark || '',
         },
       });
 
@@ -398,26 +363,19 @@ export class LoanAccountsService {
   async findGroupedByUser(
     status?: LoanAccountStatus[],
     adminId?: number,
+    dateFilter?: string,
+    specialFilter?: string,
   ): Promise<Array<{ user: User; loanAccounts: LoanAccount[] }>> {
-    // 构建基础查询条件
-    let where: any = {};
+    // 获取该admin相关的所有loan_account_ids（权限过滤）
+    let loanAccountIds: string[] = [];
 
-    // 如果状态有值，添加状态过滤
-    if (status && status.length > 0) {
-      where.status = { in: status };
-    }
-
-    // 权限过滤：如果不是管理员，则根据 admin_id 过滤
     if (adminId) {
-      // 从数据库查询用户角色，确保准确性
       const admin = await this.prisma.admin.findUnique({
         where: { id: adminId },
         select: { role: true },
       });
 
-      // 如果用户角色不是管理员，则根据 admin_id 过滤
       if (admin && admin.role !== '管理员') {
-        // 查询该 admin 在 LoanAccountRole 表中关联的所有 loan_account_id
         const loanAccountRoles = await this.prisma.loanAccountRole.findMany({
           where: {
             admin_id: adminId,
@@ -428,19 +386,292 @@ export class LoanAccountsService {
           distinct: ['loan_account_id'],
         });
 
-        const loanAccountIds = loanAccountRoles.map(
-          (role) => role.loan_account_id,
-        );
+        loanAccountIds = loanAccountRoles.map((role) => role.loan_account_id);
 
         if (loanAccountIds.length === 0) {
-          // 如果没有关联的 loan accounts，返回空数组
           return [];
         }
-
-        // 添加 loan_id 过滤条件
-        where.id = { in: loanAccountIds };
       }
-      // 如果是管理员，不添加过滤条件，可以查看所有数据
+    }
+
+    // 处理特殊筛选（基于RepaymentSchedule的筛选）
+    if (specialFilter) {
+      const now = new Date();
+      // 使用UTC时间计算日期范围
+      const todayStart = new Date(
+        Date.UTC(
+          now.getUTCFullYear(),
+          now.getUTCMonth(),
+          now.getUTCDate(),
+          0,
+          0,
+          0,
+          0,
+        ),
+      );
+      const todayEnd = new Date(
+        Date.UTC(
+          now.getUTCFullYear(),
+          now.getUTCMonth(),
+          now.getUTCDate(),
+          23,
+          59,
+          59,
+          999,
+        ),
+      );
+      const yesterdayStart = new Date(todayStart);
+      yesterdayStart.setUTCDate(yesterdayStart.getUTCDate() - 1);
+      const dayBeforeYesterdayStart = new Date(yesterdayStart);
+      dayBeforeYesterdayStart.setUTCDate(
+        dayBeforeYesterdayStart.getUTCDate() - 1,
+      );
+
+      const nextMonthStart = new Date(
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1, 0, 0, 0, 0),
+      );
+      const thisMonthStart = new Date(
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0),
+      );
+      const thisMonthEnd = new Date(nextMonthStart);
+      thisMonthEnd.setUTCMilliseconds(thisMonthEnd.getUTCMilliseconds() - 1);
+
+      const lastMonthStart = new Date(
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1, 0, 0, 0, 0),
+      );
+      const lastMonthEnd = new Date(thisMonthStart);
+      lastMonthEnd.setUTCMilliseconds(lastMonthEnd.getUTCMilliseconds() - 1);
+
+      let scheduleLoanIds: string[] = [];
+
+      switch (specialFilter) {
+        case 'todayPaid':
+          // 今日已还清：due_start_date是今天，paid_at是今天，status=paid
+          const todayPaidSchedules =
+            await this.prisma.repaymentSchedule.findMany({
+              where: {
+                loan_id:
+                  loanAccountIds.length > 0
+                    ? { in: loanAccountIds }
+                    : undefined,
+                due_start_date: {
+                  gte: todayStart,
+                  lt: nextMonthStart,
+                },
+                paid_at: {
+                  gte: todayStart,
+                  lte: todayEnd,
+                },
+                status: 'paid',
+              },
+              select: { loan_id: true },
+              distinct: ['loan_id'],
+            });
+          scheduleLoanIds = todayPaidSchedules.map((s) => s.loan_id);
+          break;
+
+        case 'todayPending':
+          // 今日待还款：due_start_date是今天，status=pending
+          const todayPendingSchedules =
+            await this.prisma.repaymentSchedule.findMany({
+              where: {
+                loan_id:
+                  loanAccountIds.length > 0
+                    ? { in: loanAccountIds }
+                    : undefined,
+                due_start_date: {
+                  gte: todayStart,
+                  lt: nextMonthStart,
+                },
+                status: 'pending',
+              },
+              select: { loan_id: true },
+              distinct: ['loan_id'],
+            });
+          scheduleLoanIds = todayPendingSchedules.map((s) => s.loan_id);
+          break;
+
+        case 'yesterdayOverdue':
+          // 昨日逾期：status=overdue，due_start_date是前天
+          const yesterdayOverdueSchedules =
+            await this.prisma.repaymentSchedule.findMany({
+              where: {
+                loan_id:
+                  loanAccountIds.length > 0
+                    ? { in: loanAccountIds }
+                    : undefined,
+                status: 'overdue',
+                due_start_date: {
+                  gte: dayBeforeYesterdayStart,
+                  lt: yesterdayStart,
+                },
+              },
+              select: { loan_id: true },
+              distinct: ['loan_id'],
+            });
+          scheduleLoanIds = yesterdayOverdueSchedules.map((s) => s.loan_id);
+          break;
+
+        case 'todayActive':
+          // 今日进行中：status=active（所有数据）
+          const todayActiveSchedules =
+            await this.prisma.repaymentSchedule.findMany({
+              where: {
+                loan_id:
+                  loanAccountIds.length > 0
+                    ? { in: loanAccountIds }
+                    : undefined,
+                status: 'active',
+              },
+              select: { loan_id: true },
+              distinct: ['loan_id'],
+            });
+          scheduleLoanIds = todayActiveSchedules.map((s) => s.loan_id);
+          break;
+      }
+
+      // 如果有特殊筛选结果，使用筛选后的loan_ids
+      if (scheduleLoanIds.length > 0) {
+        loanAccountIds =
+          loanAccountIds.length > 0
+            ? loanAccountIds.filter((id) => scheduleLoanIds.includes(id))
+            : scheduleLoanIds;
+
+        if (loanAccountIds.length === 0) {
+          return [];
+        }
+      } else if (
+        specialFilter &&
+        [
+          'todayPaid',
+          'todayPending',
+          'yesterdayOverdue',
+          'todayActive',
+        ].includes(specialFilter)
+      ) {
+        // 如果没有匹配的schedule，返回空数组
+        return [];
+      }
+    }
+
+    // 构建基础查询条件
+    let where: any = {};
+
+    // 权限过滤
+    if (loanAccountIds.length > 0) {
+      where.id = { in: loanAccountIds };
+    }
+
+    // 如果状态有值，添加状态过滤
+    if (status && status.length > 0) {
+      where.status = { in: status };
+    }
+
+    // 处理日期筛选和特殊筛选（基于LoanAccount的筛选）
+    if (dateFilter || specialFilter) {
+      const now = new Date();
+      // 使用UTC时间计算日期范围
+      const todayStart = new Date(
+        Date.UTC(
+          now.getUTCFullYear(),
+          now.getUTCMonth(),
+          now.getUTCDate(),
+          0,
+          0,
+          0,
+          0,
+        ),
+      );
+      const todayEnd = new Date(
+        Date.UTC(
+          now.getUTCFullYear(),
+          now.getUTCMonth(),
+          now.getUTCDate(),
+          23,
+          59,
+          59,
+          999,
+        ),
+      );
+      const yesterdayStart = new Date(todayStart);
+      yesterdayStart.setUTCDate(yesterdayStart.getUTCDate() - 1);
+
+      const thisMonthStart = new Date(
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0),
+      );
+      const nextMonthStart = new Date(
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1, 0, 0, 0, 0),
+      );
+      const thisMonthEnd = new Date(nextMonthStart);
+      thisMonthEnd.setUTCMilliseconds(thisMonthEnd.getUTCMilliseconds() - 1);
+
+      const lastMonthStart = new Date(
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1, 0, 0, 0, 0),
+      );
+      const lastMonthEnd = new Date(thisMonthStart);
+      lastMonthEnd.setUTCMilliseconds(lastMonthEnd.getUTCMilliseconds() - 1);
+
+      // 日期筛选（只在没有特殊筛选或特殊筛选不是基于RepaymentSchedule时使用）
+      if (
+        dateFilter &&
+        ![
+          'todayPaid',
+          'todayPending',
+          'yesterdayOverdue',
+          'todayActive',
+        ].includes(specialFilter || '')
+      ) {
+        if (dateFilter === 'today') {
+          where.due_start_date = {
+            gte: todayStart,
+            lt: nextMonthStart,
+          };
+        } else if (dateFilter === 'yesterday') {
+          where.due_start_date = {
+            gte: yesterdayStart,
+            lt: todayStart,
+          };
+        } else if (dateFilter === 'thisMonth') {
+          where.due_start_date = {
+            gte: thisMonthStart,
+            lt: nextMonthStart,
+          };
+        } else if (dateFilter === 'lastMonth') {
+          where.due_start_date = {
+            gte: lastMonthStart,
+            lt: thisMonthStart,
+          };
+        }
+      }
+
+      // 特殊筛选（基于LoanAccount的字段）
+      if (specialFilter === 'todayNegotiated') {
+        where.status = 'negotiated';
+        where.status_changed_at = {
+          gte: todayStart,
+          lte: todayEnd,
+        };
+      } else if (specialFilter === 'todayBlacklist') {
+        where.status = 'blacklist';
+        where.status_changed_at = {
+          gte: todayStart,
+          lte: todayEnd,
+        };
+      } else if (specialFilter === 'allBlacklist') {
+        where.status = 'blacklist';
+      } else if (specialFilter === 'thisMonthBlacklist') {
+        where.status = 'blacklist';
+        where.status_changed_at = {
+          gte: thisMonthStart,
+          lte: thisMonthEnd,
+        };
+      } else if (specialFilter === 'lastMonthBlacklist') {
+        where.status = 'blacklist';
+        where.status_changed_at = {
+          gte: lastMonthStart,
+          lte: lastMonthEnd,
+        };
+      }
     }
 
     const loans = await this.prisma.loanAccount.findMany({

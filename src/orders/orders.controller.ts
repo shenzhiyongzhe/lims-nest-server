@@ -118,6 +118,45 @@ export class OrdersController {
     );
     return ResponseHelper.success(updated, '审核成功');
   }
+  @Roles(ManagementRoles.负责人)
+  @Get('manual-processing')
+  async getManualProcessingOrders(
+    @CurrentUser() user: { id: number },
+  ): Promise<ApiResponseDto> {
+    const orders = await this.ordersService.getManualProcessingOrders(user.id);
+    return ResponseHelper.success(orders, '获取手动处理订单成功');
+  }
+
+  @Roles(ManagementRoles.负责人)
+  @Post('manual-processing/:orderId/process')
+  async processManualOrder(
+    @CurrentUser() user: { id: number },
+    @Param('orderId') orderId: string,
+    @Body()
+    body: {
+      periodCount: number;
+      totalCapital: number;
+      totalInterest: number;
+      fines: number;
+    },
+  ): Promise<ApiResponseDto> {
+    if (
+      !body.periodCount ||
+      body.periodCount < 1 ||
+      body.totalCapital === undefined ||
+      body.totalInterest === undefined ||
+      body.fines === undefined
+    ) {
+      return ResponseHelper.error('缺少必要参数或参数无效', 400);
+    }
+
+    const updated = await this.ordersService.processManualOrder(
+      user.id,
+      orderId,
+      body,
+    );
+    return ResponseHelper.success(updated, '处理订单成功');
+  }
 
   @Delete(':id')
   async deleteOrder(

@@ -494,37 +494,426 @@ export class OrdersService {
       throw new ForbiddenException('管理员不存在');
     }
 
-    // 计算小数部分
+    // 计算整数部分
+    const actualPaidAmountInt = Math.floor(actualPaidAmount);
+    const amountInt = Math.floor(Number(order.amount));
     const decimalPart = actualPaidAmount % 1;
 
     return await this.prisma.$transaction(async (tx) => {
-      // 1. 更新订单状态和实付金额
-      const updatedOrder = await tx.order.update({
+      // 判断整数部分是否相等
+      if (actualPaidAmountInt !== amountInt) {
+        // 整数部分不相等，需要手动处理
+        const updatedOrder = await tx.order.update({
+          where: { id: orderId },
+          data: {
+            status: 'completed',
+            actual_paid_amount: actualPaidAmount,
+            processed_by_admin_id: adminId,
+            processed_by_admin_name: admin.username,
+            needs_manual_processing: true,
+            manual_processing_status: 'unprocessed',
+            updated_at: new Date(),
+          } as any,
+        });
+
+        // 更新排行榜（累加小数部分）
+        if (decimalPart > 0 && order.payee_id) {
+          await this.payeeRankingService.updateDecimalSum(
+            order.payee_id,
+            decimalPart,
+          );
+        }
+
+        // 更新每日收款统计
+        if (order.payee_id) {
+          await this.payeeDailyStatisticsService.updateDailyStatistics(
+            order.payee_id,
+            actualPaidAmount,
+          );
+        }
+
+        return updatedOrder;
+      } else {
+        // 整数部分相等，正常处理
+        // 1. 获取对应的还款计划（按 due_start_date 排序）
+        const schedules = await tx.repaymentSchedule.findMany({
+          where: {
+            loan_id: order.loan_id,
+            status: { in: ['pending', 'active'] },
+          },
+          orderBy: {
+            due_start_date: 'asc',
+          },
+        });
+
+        // 根据 payment_periods 找到对应的 schedule（payment_periods 从1开始，数组从0开始）
+        const scheduleIndex = order.payment_periods - 1;
+        if (scheduleIndex < 0 || scheduleIndex >= schedules.length) {
+          throw new BadRequestException('还款计划不存在');
+        }
+        const targetSchedule = schedules[scheduleIndex];
+
+        const scheduleCapital = Number(targetSchedule.capital || 0);
+        const scheduleInterest = Number(targetSchedule.interest || 0);
+
+        // 2. 创建还款记录
+        if (!order.payee_id) {
+          throw new BadRequestException('订单未关联收款人');
+        }
+        const repaymentRecord = await tx.repaymentRecord.create({
+          data: {
+            loan_id: order.loan_id,
+            user_id: order.customer_id,
+            paid_amount: actualPaidAmountInt,
+            paid_at: new Date(),
+            payment_method: order.payment_method,
+            payee_id: order.payee_id,
+            remark: '客户还款',
+            order_id: orderId,
+            collected_by_type: 'grabbed',
+            operator_admin_id: adminId,
+            operator_admin_name: admin.username,
+            paid_capital: scheduleCapital,
+            paid_interest: scheduleInterest,
+            repayment_schedule_id: targetSchedule.id,
+          },
+        });
+
+        // 3. 更新还款计划
+        await tx.repaymentSchedule.update({
+          where: { id: targetSchedule.id },
+          data: {
+            status: 'paid',
+            paid_capital: scheduleCapital,
+            paid_interest: scheduleInterest,
+            paid_amount: actualPaidAmountInt,
+            paid_at: new Date(),
+          },
+        });
+
+        // 4. 更新 LoanAccount
+        const loanAccount = await tx.loanAccount.findUnique({
+          where: { id: order.loan_id },
+        });
+
+        if (loanAccount) {
+          await tx.loanAccount.update({
+            where: { id: order.loan_id },
+            data: {
+              receiving_amount: {
+                increment: actualPaidAmountInt,
+              },
+              paid_capital: {
+                increment: scheduleCapital,
+              },
+              paid_interest: {
+                increment: scheduleInterest,
+              },
+              repaid_periods: {
+                increment: 1,
+              },
+            },
+          });
+        }
+
+        // 5. 更新订单状态
+        const updatedOrder = await tx.order.update({
+          where: { id: orderId },
+          data: {
+            status: 'completed',
+            actual_paid_amount: actualPaidAmount,
+            processed_by_admin_id: adminId,
+            processed_by_admin_name: admin.username,
+            needs_manual_processing: false,
+            updated_at: new Date(),
+          } as any,
+        });
+
+        // 6. 更新排行榜（累加小数部分）
+        if (decimalPart > 0 && order.payee_id) {
+          await this.payeeRankingService.updateDecimalSum(
+            order.payee_id,
+            decimalPart,
+          );
+        }
+
+        // 7. 更新每日收款统计
+        if (order.payee_id) {
+          await this.payeeDailyStatisticsService.updateDailyStatistics(
+            order.payee_id,
+            actualPaidAmount,
+          );
+        }
+
+        return updatedOrder;
+      }
+    });
+  }
+
+  /**
+   * 获取需要手动处理的订单列表
+   */
+  async getManualProcessingOrders(adminId: number) {
+    const role = await this.getAdminRole(adminId);
+    // 允许 collector（收款人）和管理员访问
+    if (role !== '负责人' && role !== '管理员') {
+      throw new ForbiddenException('无权限访问');
+    }
+
+    return this.prisma.order
+      .findMany({
+        where: {
+          needs_manual_processing: true,
+          manual_processing_status: 'unprocessed',
+        } as any,
+        include: {
+          customer: {
+            select: {
+              id: true,
+              username: true,
+              phone: true,
+              address: true,
+            },
+          },
+          payee: {
+            select: {
+              id: true,
+              username: true,
+            },
+          },
+        },
+        orderBy: { updated_at: 'desc' },
+      })
+      .then(async (orders) => {
+        // 为每个订单获取 loanAccount 信息
+        const ordersWithLoanAccount = await Promise.all(
+          orders.map(async (order) => {
+            const loanAccount = await this.prisma.loanAccount.findUnique({
+              where: { id: order.loan_id },
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    username: true,
+                  },
+                },
+                repaymentSchedules: {
+                  where: {
+                    status: 'pending',
+                  },
+                  orderBy: {
+                    due_start_date: 'asc',
+                  },
+                },
+              },
+            });
+            return {
+              ...order,
+              loanAccount,
+            };
+          }),
+        );
+        return ordersWithLoanAccount;
+      });
+  }
+
+  /**
+   * 处理手动订单
+   */
+  async processManualOrder(
+    adminId: number,
+    orderId: string,
+    data: {
+      periodCount: number;
+      totalCapital: number;
+      totalInterest: number;
+      fines: number;
+    },
+  ) {
+    const role = await this.getAdminRole(adminId);
+    if (role !== '负责人' && role !== '管理员') {
+      throw new ForbiddenException('无权限处理');
+    }
+
+    // 获取管理员信息
+    const admin = await this.prisma.admin.findUnique({
+      where: { id: adminId },
+      select: { username: true },
+    });
+
+    if (!admin) {
+      throw new ForbiddenException('管理员不存在');
+    }
+
+    return await this.prisma.$transaction(async (tx) => {
+      // 1. 验证订单状态
+      const order = await tx.order.findUnique({
         where: { id: orderId },
-        data: {
-          status: 'completed',
-          actual_paid_amount: actualPaidAmount,
-          processed_by_admin_id: adminId,
-          processed_by_admin_name: admin.username,
-          updated_at: new Date(),
+        include: {
+          payee: true,
         },
       });
 
-      // 2. 更新排行榜（累加小数部分）
-      if (decimalPart > 0 && order.payee_id) {
-        await this.payeeRankingService.updateDecimalSum(
-          order.payee_id,
-          decimalPart,
-        );
+      if (!order) {
+        throw new NotFoundException('订单不存在');
       }
 
-      // 3. 更新每日收款统计
-      if (order.payee_id) {
-        await this.payeeDailyStatisticsService.updateDailyStatistics(
-          order.payee_id,
-          actualPaidAmount,
-        );
+      if ((order as any).needs_manual_processing !== true) {
+        throw new BadRequestException('订单不需要手动处理');
       }
+
+      if ((order as any).manual_processing_status !== 'unprocessed') {
+        throw new BadRequestException('订单已处理');
+      }
+
+      // 2. 获取订单对应的 loanAccount 和 repaymentSchedules
+      const loanAccount = await tx.loanAccount.findUnique({
+        where: { id: order.loan_id },
+        include: {
+          user: {
+            select: {
+              id: true,
+              username: true,
+            },
+          },
+        },
+      });
+
+      if (!loanAccount) {
+        throw new NotFoundException('贷款账户不存在');
+      }
+
+      // 获取 pending 状态的还款计划，按 due_start_date 排序
+      const schedules = await tx.repaymentSchedule.findMany({
+        where: {
+          loan_id: order.loan_id,
+          status: 'pending',
+        },
+        orderBy: {
+          due_start_date: 'asc',
+        },
+      });
+
+      if (schedules.length < data.periodCount) {
+        throw new BadRequestException('还款计划数量不足');
+      }
+
+      // 验证所有期数的capital是否相等（除了最后一条）
+      const expectedCapital = Math.floor(data.totalCapital / data.periodCount);
+      for (let i = 0; i < data.periodCount - 1; i++) {
+        const scheduleCapital = Number(schedules[i].capital || 0);
+        if (scheduleCapital !== expectedCapital) {
+          throw new BadRequestException(
+            `第 ${i + 1} 期还款计划的本金应为 ${expectedCapital}，实际为 ${scheduleCapital}`,
+          );
+        }
+      }
+
+      // 计算每期的本金和利息
+      // 前 n-1 条：capital = totalCapital / periodCount 向下取整
+      // 最后一条：capital = totalCapital - 前 n-1 条的和
+      const baseCapital = Math.floor(data.totalCapital / data.periodCount);
+      const baseInterest = Math.floor(data.totalInterest / data.periodCount);
+      const lastCapital =
+        data.totalCapital - baseCapital * (data.periodCount - 1);
+      const lastInterest =
+        data.totalInterest - baseInterest * (data.periodCount - 1);
+
+      // 3. 处理每一期
+      let totalPaidAmount = 0;
+      let totalPaidCapital = 0;
+      let totalPaidInterest = 0;
+      const lastPeriodIndex = data.periodCount - 1;
+
+      for (let i = 0; i < data.periodCount; i++) {
+        const schedule = schedules[i];
+        const isLast = i === lastPeriodIndex;
+        const paidCapital = isLast ? lastCapital : baseCapital;
+        const paidInterest = isLast ? lastInterest : baseInterest;
+        const paidFines = isLast ? data.fines : 0;
+
+        // 计算本期的总还款金额
+        const periodPaidAmount = paidCapital + paidInterest + paidFines;
+        totalPaidAmount += periodPaidAmount;
+        totalPaidCapital += paidCapital;
+        totalPaidInterest += paidInterest;
+
+        // 4. 更新 repaymentSchedule
+        await tx.repaymentSchedule.update({
+          where: { id: schedule.id },
+          data: {
+            status: 'paid',
+            paid_capital: paidCapital,
+            paid_interest: paidInterest,
+            fines: paidFines > 0 ? paidFines : 0,
+            paid_amount: periodPaidAmount,
+            paid_at: new Date(),
+            operator_admin_id: adminId,
+            operator_admin_name: admin.username,
+            collected_by_type: 'manual',
+          },
+        });
+
+        // 5. 创建还款记录
+        if (!order.payee_id) {
+          throw new BadRequestException('订单未关联收款人');
+        }
+        await tx.repaymentRecord.create({
+          data: {
+            loan_id: order.loan_id,
+            user_id: loanAccount.user_id,
+            paid_amount: periodPaidAmount,
+            paid_at: new Date(),
+            payment_method: order.payment_method,
+            payee_id: order.payee_id,
+            remark: '客户还款',
+            order_id: orderId,
+            collected_by_type: 'manual',
+            operator_admin_id: adminId,
+            operator_admin_name: admin.username,
+            paid_capital: paidCapital,
+            paid_interest: paidInterest,
+            paid_fines: paidFines > 0 ? paidFines : null,
+            repayment_schedule_id: schedule.id,
+          },
+        });
+      }
+
+      // 6. 更新 LoanAccount
+      const currentRepaidPeriods = await tx.repaymentSchedule.count({
+        where: {
+          loan_id: order.loan_id,
+          status: 'paid',
+        },
+      });
+
+      await tx.loanAccount.update({
+        where: { id: order.loan_id },
+        data: {
+          receiving_amount: {
+            increment: totalPaidAmount,
+          },
+          paid_capital: {
+            increment: totalPaidCapital,
+          },
+          paid_interest: {
+            increment: totalPaidInterest,
+          },
+          total_fines: {
+            increment: data.fines,
+          },
+          repaid_periods: currentRepaidPeriods,
+        },
+      });
+
+      // 7. 更新订单状态
+      const updatedOrder = await tx.order.update({
+        where: { id: orderId },
+        data: {
+          manual_processing_status: 'processed',
+          updated_at: new Date(),
+        } as any,
+      });
 
       return updatedOrder;
     });
@@ -536,6 +925,12 @@ export class OrdersService {
   async deleteOrder(adminId: number, orderId: string) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
+      select: {
+        id: true,
+        payee_id: true,
+        amount: true,
+        status: true,
+      },
     });
 
     if (!order) {
@@ -551,8 +946,25 @@ export class OrdersService {
       }
     }
 
-    await this.prisma.order.delete({
-      where: { id: orderId },
+    // 使用事务确保删除订单和恢复额度的原子性
+    await this.prisma.$transaction(async (tx) => {
+      // 删除订单
+      await tx.order.delete({
+        where: { id: orderId },
+      });
+
+      // 如果订单已被抢单（状态为 grabbed），恢复收款人的剩余额度
+      if (order.status === 'grabbed' && order.payee_id) {
+        const orderAmount = Number(order.amount);
+        await tx.payee.update({
+          where: { id: order.payee_id },
+          data: {
+            remaining_limit: {
+              increment: orderAmount,
+            },
+          },
+        });
+      }
     });
 
     return { success: true };

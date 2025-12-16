@@ -84,4 +84,8 @@ export class CreateLoanAccountDto {
   @IsNumber()
   @IsOptional()
   company_cost?: number;
+
+  @IsString()
+  @IsOptional()
+  remark?: string;
 }

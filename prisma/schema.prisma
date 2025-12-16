@@ -226,6 +226,7 @@ model Payee {
   username      String    @db.VarChar(10)
   address       String    @db.VarChar(100)
   payment_limit Int       @default(20000)
+  remaining_limit Int     @default(20000)
   qrcode_number Int       @default(5)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime? @updatedAt
@@ -261,6 +262,11 @@ enum OrderStatus {
   cancelled
 }
 
+enum ManualProcessingStatus {
+  processed
+  unprocessed
+}
+
 // 在现有schema基础上添加订单表
 model Order {
   id                      String           @id @default(cuid())
@@ -280,6 +286,8 @@ model Order {
   processed_by_admin_name String?          @db.VarChar(50)
   grabbed_at              DateTime?
   actual_paid_amount      Decimal?         @db.Decimal(10, 2)
+  needs_manual_processing Boolean          @default(false)
+  manual_processing_status ManualProcessingStatus @default(unprocessed)
 
   customer         User              @relation(fields: [customer_id], references: [id])
   payee            Payee?            @relation(fields: [payee_id], references: [id])

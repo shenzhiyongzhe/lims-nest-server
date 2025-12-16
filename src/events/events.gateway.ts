@@ -303,6 +303,9 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
             message: result.success ? '抢单成功' : '抢单处理完成',
           });
 
+          // 获取订单的完整信息（包括expires_at和amount）
+          const orderDetails = await this.eventsService.getOrderById(orderId);
+
           if (customerSocket) {
             customerSocket.emit('order_grabbed', {
               type: 'order_grabbed',
@@ -310,6 +313,12 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
                 id: orderId,
                 payeeId: foundPayeeId,
                 payeeName: result.payeeName,
+                amount: orderDetails?.amount
+                  ? Number(orderDetails.amount)
+                  : Number(order.amount),
+                expires_at:
+                  orderDetails?.expires_at?.toISOString() ||
+                  new Date(Date.now() + 60 * 1000).toISOString(),
               },
             });
             console.log('✅ 已发送抢单通知给客户:', order.customer_id);

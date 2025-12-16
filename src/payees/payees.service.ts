@@ -20,13 +20,15 @@ export class PayeesService {
   ) {}
 
   create(data: CreatePayeeDto): Promise<Payee> {
-    const payload: CreatePayeeDto = {
+    const paymentLimit = (data as any).payment_limit ?? 1000;
+    const payload = {
       ...data,
       // 默认值：若未传入则使用默认
       address: data.address ?? '广东深圳',
-      payment_limit: (data as any).payment_limit ?? 1000,
+      payment_limit: paymentLimit,
+      remaining_limit: paymentLimit, // 初始化剩余额度等于总额度
       qrcode_number: (data as any).qrcode_number ?? 3,
-    } as CreatePayeeDto;
+    };
     return this.prisma.payee.create({ data: payload });
   }
   findAll(): Promise<Payee[]> {
@@ -191,11 +193,13 @@ export class PayeesService {
       await this.payeeDailyStatisticsService.getTodayAndYesterdayStatistics(
         payee.id,
       );
-
-    const dailyBalance = payee.payment_limit - statistics.today.daily_total;
+    const remaining_limit = await this.prisma.payee.findUnique({
+      where: { id: payee.id },
+      select: { remaining_limit: true },
+    });
 
     return {
-      daily_balance: dailyBalance,
+      daily_balance: remaining_limit?.remaining_limit ?? 0,
       today_amount: statistics.today.daily_total,
       yesterday_amount: statistics.yesterday.daily_total,
       payment_limit: payee.payment_limit,

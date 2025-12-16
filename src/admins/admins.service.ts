@@ -26,12 +26,14 @@ export class AdminService {
 
       // 如果创建的是收款人，自动创建对应的 Payee
       if (created.role === '收款人') {
+        const paymentLimit = 1000;
         await tx.payee.create({
           data: {
             admin_id: created.id,
             username: created.username,
             address: '广东深圳',
-            payment_limit: 1000,
+            payment_limit: paymentLimit,
+            remaining_limit: paymentLimit, // 初始化剩余额度等于总额度
             qrcode_number: 3,
           },
         });

@@ -1153,13 +1153,25 @@ export class LoanAccountsService {
             });
             orderId = newOrder.id;
 
+            // 获取actual_collector_id：如果有payee，使用payee.admin_id
+            let actualCollectorId: number | null = null;
+            if (payee?.id) {
+              const payeeRecord = await tx.payee.findUnique({
+                where: { id: payee.id },
+                select: { admin_id: true },
+              });
+              if (payeeRecord) {
+                actualCollectorId = payeeRecord.admin_id;
+              }
+            }
+
             // 更新还款记录
             await tx.repaymentRecord.update({
               where: { id: existingRecord.id },
               data: {
                 paid_amount: settlementAmount,
                 paid_at: new Date(),
-                payee_id: payee?.id ?? 0,
+                actual_collector_id: actualCollectorId,
                 order_id: orderId,
                 // 记录本次结清的本金和利息，便于后续统计
                 paid_capital: hasManualSettlement ? manualCapital : null,
@@ -1169,6 +1181,18 @@ export class LoanAccountsService {
             });
           } else {
             // 如果记录不存在，创建新订单和还款记录
+            // 获取actual_collector_id：如果有payee，使用payee.admin_id
+            let actualCollectorId: number | null = null;
+            if (payee?.id) {
+              const payeeRecord = await tx.payee.findUnique({
+                where: { id: payee.id },
+                select: { admin_id: true },
+              });
+              if (payeeRecord) {
+                actualCollectorId = payeeRecord.admin_id;
+              }
+            }
+
             const order = await tx.order.create({
               data: {
                 customer_id: la!.user_id,
@@ -1191,7 +1215,7 @@ export class LoanAccountsService {
                 paid_amount: settlementAmount,
                 paid_at: new Date(),
                 payment_method: 'wechat_pay' as any,
-                payee_id: payee?.id ?? 0,
+                actual_collector_id: actualCollectorId,
                 remark: '来源：提前结清',
                 order_id: order.id,
                 // 记录本次结清的本金和利息，便于后续统计

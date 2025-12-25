@@ -53,6 +53,7 @@ model Admin {
   loanAccountsAsRiskController LoanAccount[]     @relation("RiskControllerLoanAccounts")
   loanAccountsAsLender         LoanAccount[]     @relation("LenderLoanAccounts")
   dailyStatistics              DailyStatistics[]
+  repaymentRecords             RepaymentRecord[]
 
   @@map("admins")
 }
@@ -182,12 +183,10 @@ model RepaymentRecord {
   paid_amount           Decimal?         @db.Decimal(10, 2)
   paid_at               DateTime         @default(now())
   payment_method        PaymentMethod    @default(wechat_pay)
-  payee_id              Int
   remark                String?          @db.VarChar(255)
   order_id              String
   collected_by_type     CollectionSource @default(grabbed)
-  operator_admin_id     Int?
-  operator_admin_name   String?          @db.VarChar(50)
+  actual_collector_id   Int?
   paid_capital          Decimal?         @db.Decimal(10, 2)
   paid_interest         Decimal?         @db.Decimal(10, 2)
   paid_fines            Decimal?         @db.Decimal(10, 2)
@@ -196,7 +195,7 @@ model RepaymentRecord {
   order              Order?             @relation(fields: [order_id], references: [id])
   loan_account       LoanAccount?       @relation(fields: [loan_id], references: [id])
   user               User?              @relation(fields: [user_id], references: [id])
-  payee              Payee?             @relation(fields: [payee_id], references: [id])
+  actual_collector   Admin?             @relation(fields: [actual_collector_id], references: [id])
   repayment_schedule RepaymentSchedule? @relation(fields: [repayment_schedule_id], references: [id], onDelete: SetNull)
 
   @@map("repayment_records")
@@ -234,7 +233,6 @@ model Payee {
   admin            Admin?                 @relation(fields: [admin_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
   qrcode           QrCode[]
   orders           Order[]
-  repaymentRecords RepaymentRecord[]
   ranking          PayeeRanking?
   dailyStatistics  PayeeDailyStatistics[]
 
@@ -267,6 +265,17 @@ enum ManualProcessingStatus {
   unprocessed
 }
 
+enum PaymentFeedback {
+  success
+  failed
+  no_feedback
+}
+
+enum ReviewStatus {
+  pending_review
+  reviewed
+}
+
 // 在现有schema基础上添加订单表
 model Order {
   id                      String           @id @default(cuid())
@@ -288,6 +297,8 @@ model Order {
   actual_paid_amount      Decimal?         @db.Decimal(10, 2)
   needs_manual_processing Boolean          @default(false)
   manual_processing_status ManualProcessingStatus @default(unprocessed)
+  payment_feedback        PaymentFeedback  @default(no_feedback)
+  review_status           ReviewStatus     @default(pending_review)
 
   customer         User              @relation(fields: [customer_id], references: [id])
   payee            Payee?            @relation(fields: [payee_id], references: [id])

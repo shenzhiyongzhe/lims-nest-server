@@ -12,7 +12,6 @@ import { ManagementRoles } from '@prisma/client';
 import { OverdueService } from './overdue.service';
 import { ScheduleStatusService } from './schedule-status.service';
 import { StatisticsCronService } from './statistics.service';
-import { PayeeLimitService } from './payee-limit.service';
 import { ResponseHelper } from '../common/response-helper';
 import { ApiResponseDto } from '../common/dto/api-response.dto';
 
@@ -24,7 +23,6 @@ export class CronController {
     private readonly overdueService: OverdueService,
     private readonly scheduleStatusService: ScheduleStatusService,
     private readonly statisticsCronService: StatisticsCronService,
-    private readonly payeeLimitService: PayeeLimitService,
   ) {}
 
   /**
@@ -94,24 +92,6 @@ export class CronController {
     } catch (error: any) {
       return ResponseHelper.error(
         `缺失统计数据检查任务执行失败: ${error.message}`,
-        500,
-      );
-    }
-  }
-
-  /**
-   * 手动触发收款人剩余额度重置任务
-   * POST /cron/trigger/reset-payee-limits
-   */
-  @Post('trigger/reset-payee-limits')
-  @HttpCode(HttpStatus.OK)
-  async triggerResetPayeeLimits(): Promise<ApiResponseDto> {
-    try {
-      await this.payeeLimitService.resetRemainingLimits();
-      return ResponseHelper.success(null, '收款人剩余额度重置任务执行成功');
-    } catch (error: any) {
-      return ResponseHelper.error(
-        `收款人剩余额度重置任务执行失败: ${error.message}`,
         500,
       );
     }

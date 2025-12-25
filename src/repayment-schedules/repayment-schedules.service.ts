@@ -76,6 +76,7 @@ export class RepaymentSchedulesService {
           fines: true,
           status: true,
           paid_amount: true,
+          operator_admin_name: true,
         },
       });
 
@@ -118,24 +119,18 @@ export class RepaymentSchedulesService {
         });
         operatorName = op?.username ?? null;
       }
-
       const paidAmount = inputCapital + inputInterest + finesValue;
       const nextPaid = Number(paidAmount.toFixed(2));
       updatePayload.paid_amount = nextPaid;
 
       // 只要本期存在已还金额，则标记为手动收款并记录操作人
-      if (nextPaid > 0) {
+      if (currentSchedule.operator_admin_name == null) {
         updatePayload.collected_by_type = 'manual';
         if (operatorAdminId) {
           updatePayload.operator_admin_id = operatorAdminId;
           updatePayload.operator_admin_name = operatorName;
         }
-      } else {
-        updatePayload.collected_by_type = null;
-        updatePayload.operator_admin_id = null;
-        updatePayload.operator_admin_name = null;
       }
-
       let derivedStatus: RepaymentScheduleStatus = currentSchedule.status;
       if (inputCapital >= baseCapital && inputInterest >= baseInterest) {
         derivedStatus = 'paid';
@@ -176,7 +171,43 @@ export class RepaymentSchedulesService {
         // 查找是否已有与该还款计划关联的还款记录
         const existingRecord = await tx.repaymentRecord.findFirst({
           where: { repayment_schedule_id: updatedSchedule.id },
+          select: {
+            id: true,
+            order_id: true,
+            actual_collector_id: true,
+          },
         });
+
+        // 确定actual_collector_id的值
+        let actualCollectorId: number | null = null;
+        if (existingRecord) {
+          // 如果已有actual_collector_id，则保持不变
+          if (existingRecord.actual_collector_id) {
+            actualCollectorId = existingRecord.actual_collector_id;
+          } else {
+            // 如果没有actual_collector_id，且更新前paid_capital和paid_interest为0，则使用operatorAdminId
+            const prevPaidCapital = toNumber(currentSchedule.paid_capital);
+            const prevPaidInterest = toNumber(currentSchedule.paid_interest);
+            if (
+              prevPaidCapital === 0 &&
+              prevPaidInterest === 0 &&
+              operatorAdminId
+            ) {
+              actualCollectorId = operatorAdminId;
+            }
+          }
+        } else {
+          // 新建记录：如果更新前paid_capital和paid_interest为0，则使用operatorAdminId
+          const prevPaidCapital = toNumber(currentSchedule.paid_capital);
+          const prevPaidInterest = toNumber(currentSchedule.paid_interest);
+          if (
+            prevPaidCapital === 0 &&
+            prevPaidInterest === 0 &&
+            operatorAdminId
+          ) {
+            actualCollectorId = operatorAdminId;
+          }
+        }
 
         if (existingRecord) {
           // 更新已有订单金额
@@ -197,13 +228,9 @@ export class RepaymentSchedulesService {
               paid_amount: currPaid,
               paid_at: new Date(),
               payment_method: PaymentMethod.wechat_pay,
-              payee_id: payee?.id ?? existingRecord.payee_id ?? 0,
+              actual_collector_id: actualCollectorId,
               remark: '来源：编辑还款计划',
               collected_by_type: 'manual',
-              operator_admin_id:
-                operatorAdminId ?? existingRecord.operator_admin_id,
-              operator_admin_name:
-                operatorDisplayName ?? existingRecord.operator_admin_name,
               paid_capital: inputCapital > 0 ? inputCapital : null,
               paid_interest: inputInterest > 0 ? inputInterest : null,
               paid_fines: finesValue > 0 ? finesValue : null,
@@ -236,12 +263,10 @@ export class RepaymentSchedulesService {
               paid_amount: currPaid,
               paid_at: new Date(),
               payment_method: PaymentMethod.wechat_pay,
-              payee_id: payee?.id ?? 0,
+              actual_collector_id: actualCollectorId,
               remark: '来源：编辑还款计划',
               order_id: order.id,
               collected_by_type: 'manual',
-              operator_admin_id: operatorAdminId ?? null,
-              operator_admin_name: operatorDisplayName ?? null,
               paid_capital: inputCapital > 0 ? inputCapital : null,
               paid_interest: inputInterest > 0 ? inputInterest : null,
               paid_fines: finesValue > 0 ? finesValue : null,

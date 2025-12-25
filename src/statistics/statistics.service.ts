@@ -430,11 +430,7 @@ export class StatisticsService {
         loan_id: { in: loanAccountIds },
         due_start_date: {
           gte: todayStart,
-          lt: nextMonthStart, // Date类型字段，使用下个月第一天作为上限
-        },
-        paid_at: {
-          gte: todayStart,
-          lte: todayEnd, // DateTime类型字段，使用今天结束时间
+          lte: todayEnd,
         },
         status: 'paid',
       },
@@ -447,7 +443,7 @@ export class StatisticsService {
         loan_id: { in: loanAccountIds },
         due_start_date: {
           gte: todayStart,
-          lt: nextMonthStart,
+          lt: todayEnd,
         },
         status: 'pending',
       },

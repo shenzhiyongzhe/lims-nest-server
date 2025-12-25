@@ -15,7 +15,12 @@ import { RolesGuard } from '../auth/roles.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { ApiResponseDto } from '../common/dto/api-response.dto';
 import { ResponseHelper } from '../common/response-helper';
-import { ManagementRoles, OrderStatus } from '@prisma/client';
+import {
+  ManagementRoles,
+  OrderStatus,
+  PaymentFeedback,
+  ReviewStatus,
+} from '@prisma/client';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { Roles } from 'src/auth/roles.decorator';
 
@@ -63,6 +68,40 @@ export class OrdersController {
     return ResponseHelper.success(updated, '更新订单成功');
   }
 
+  @Put('payment-feedback')
+  async updatePaymentFeedback(
+    @CurrentUser() user: { id: number },
+    @Body() body: { id: string; payment_feedback: PaymentFeedback },
+  ): Promise<ApiResponseDto> {
+    if (!body.id || !body.payment_feedback) {
+      return ResponseHelper.error('缺少必要参数', 400);
+    }
+    const updated = await this.ordersService.updatePaymentFeedback(
+      user.id,
+      body.id,
+      body.payment_feedback,
+    );
+    return ResponseHelper.success(updated, '更新支付反馈成功');
+  }
+
+  @Put('review-status')
+  async updateReviewStatus(
+    @CurrentUser() user: { id: number },
+    @Body()
+    body: { id: string; review_status: ReviewStatus; status?: OrderStatus },
+  ): Promise<ApiResponseDto> {
+    if (!body.id || !body.review_status) {
+      return ResponseHelper.error('缺少必要参数', 400);
+    }
+    const updated = await this.ordersService.updateReviewStatus(
+      user.id,
+      body.id,
+      body.review_status,
+      body.status,
+    );
+    return ResponseHelper.success(updated, '更新审核状态成功');
+  }
+
   @Post('partial-payment')
   async partialPayment(
     @CurrentUser() user: { id: number },
@@ -87,12 +126,12 @@ export class OrdersController {
   @Get('review')
   async getReviewOrders(
     @CurrentUser() user: { id: number },
-    @Query('status') status?: OrderStatus,
+    @Query('review_status') reviewStatus?: ReviewStatus,
     @Query('date') date?: string,
   ): Promise<ApiResponseDto> {
     const orders = await this.ordersService.getReviewOrders(
       user.id,
-      status,
+      reviewStatus,
       date,
     );
     return ResponseHelper.success(orders, '获取审核订单成功');

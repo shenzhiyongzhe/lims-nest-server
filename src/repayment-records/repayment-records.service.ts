@@ -40,7 +40,7 @@ export class RepaymentRecordsService {
       where,
       include: {
         user: true,
-        payee: true,
+        actual_collector: true,
         order: true,
         loan_account: true,
       },
@@ -84,7 +84,7 @@ export class RepaymentRecordsService {
       where,
       include: {
         user: true,
-        payee: true,
+        actual_collector: true,
         order: true,
         loan_account: true,
       },
@@ -103,7 +103,7 @@ export class RepaymentRecordsService {
 
     if (params?.userId) where.user_id = params.userId;
     if (params?.loanId) where.loan_id = params.loanId;
-    if (params?.payeeId) where.payee_id = params.payeeId;
+    if (params?.payeeId) where.actual_collector_id = params.payeeId;
 
     if (params?.startDate || params?.endDate) {
       where.paid_at = {};
@@ -115,7 +115,7 @@ export class RepaymentRecordsService {
       where,
       include: {
         user: true,
-        payee: true,
+        actual_collector: true,
         order: true,
         loan_account: true,
       },
@@ -202,7 +202,7 @@ export class RepaymentRecordsService {
 
     if (userId) where.user_id = userId;
     if (loanId) where.loan_id = loanId;
-    if (payeeId) where.payee_id = payeeId;
+    if (payeeId) where.actual_collector_id = payeeId;
 
     if (startDate || endDate) {
       where.paid_at = {};
@@ -215,7 +215,7 @@ export class RepaymentRecordsService {
         where,
         include: {
           user: true,
-          payee: true,
+          actual_collector: true,
           order: true,
           loan_account: true,
         },
@@ -249,9 +249,8 @@ export class RepaymentRecordsService {
       paid_amount: Number(record.paid_amount || 0),
       paid_at: record.paid_at,
       payment_method: record.payment_method,
-      payee_id: record.payee_id,
-      payee_name:
-        record.operator_admin_name || record.payee?.username || undefined,
+      actual_collector_id: record.actual_collector_id || undefined,
+      actual_collector_name: record.actual_collector?.username || undefined,
       remark: record.remark || undefined,
       order_id: record.order_id,
       // 用户信息

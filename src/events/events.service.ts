@@ -33,8 +33,13 @@ export class EventsService {
     if (type === 'payee' && opts.payeeId) {
       this.payeeConnections.set(opts.payeeId, connectionId);
       console.log(
+        `✅ 收款人 ${opts.payeeId} 连接已存储，连接ID: ${connectionId}`,
+      );
+      console.log(
         `📊 当前活跃的收款人连接:`,
-        Array.from(this.payeeConnections.keys()),
+        Array.from(this.payeeConnections.entries()).map(
+          ([payeeId, connId]) => `${payeeId}:${connId}`,
+        ),
       );
     }
     if (type === 'customer' && opts.userId) {
@@ -85,7 +90,7 @@ export class EventsService {
     const paymentPeriods = Number(data.payment_periods ?? 0);
     const paymentMethod = data.payment_method;
     const remark = data.remark ?? null;
-    const expiresAt = new Date(Date.now() + 180 * 1000);
+    const expiresAt = new Date(Date.now() + 90 * 1000);
 
     await this.prisma.order.upsert({
       where: { id: data.id },
@@ -126,19 +131,6 @@ export class EventsService {
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
-    const todayAmount = await this.prisma.repaymentRecord.aggregate({
-      where: {
-        payee_id: payeeId,
-        paid_at: {
-          gte: today.toISOString(),
-          lt: tomorrow.toISOString(),
-        },
-      },
-      _sum: {
-        paid_amount: true,
-      },
-    });
-
     const payee = await this.prisma.payee.findUnique({
       where: { id: payeeId },
     });
@@ -166,7 +158,8 @@ export class EventsService {
             status: 'grabbed',
             grabbed_at: grabbedAt,
             updated_at: grabbedAt,
-          },
+            review_status: 'pending_review',
+          } as any,
           create: {
             id,
             customer_id: customerId,
@@ -178,8 +171,9 @@ export class EventsService {
             status: 'grabbed',
             payee_id: payeeId,
             grabbed_at: grabbedAt,
-            expires_at: new Date(Date.now() + 60 * 1000),
-          },
+            expires_at: new Date(Date.now() + 90 * 1000),
+            review_status: 'pending_review',
+          } as any,
         });
         // 减少剩余额度
         await tx.payee.update({
@@ -219,7 +213,7 @@ export class EventsService {
             : Number(order.amount),
           expires_at:
             orderDetails?.expires_at?.toISOString() ||
-            new Date(Date.now() + 60 * 1000).toISOString(),
+            new Date(Date.now() + 90 * 1000).toISOString(),
         },
       });
     }
@@ -281,15 +275,17 @@ export class EventsService {
 
       const historyCount = await this.prisma.repaymentRecord.count({
         where: {
-          payee_id: payee.id,
+          actual_collector_id: payee.admin_id,
           user_id: orderData.customer_id,
         },
       });
-      if (historyCount > 0) {
-        priority += 1000;
-        delay = 1;
+      console.log(
+        `🔍 收款人 ${payee.id} 的历史还款记录: ${historyCount},orderData.customer_id: ${orderData.customer_id}`,
+      );
+      // 使用 remaining_limit 来判断是否足够
+      if (payee.remaining_limit < Number(amount)) {
+        continue;
       }
-
       if (
         customer?.address &&
         payee.address &&
@@ -299,9 +295,9 @@ export class EventsService {
         delay = 10_000;
       }
 
-      // 使用 remaining_limit 来判断是否足够
-      if (payee.remaining_limit < Number(amount)) {
-        continue;
+      if (historyCount > 0) {
+        priority += 1000;
+        delay = 1;
       }
 
       if (delay === 0) delay = 30_000;
@@ -344,11 +340,24 @@ export class EventsService {
     }
 
     const priorities = await this.calculatePayeePriority(orderData);
+
+    // 打印当前所有收款人连接状态
+    console.log(
+      `📊 当前所有收款人连接:`,
+      Array.from(this.payeeConnections.entries()).map(
+        ([payeeId, connId]) => `${payeeId}:${connId}`,
+      ),
+    );
+
     // 使用 Promise.all 处理所有延迟发送的消息
     await Promise.all(
       priorities.map(async ({ payee, delay }) => {
         const connectionId = this.payeeConnections.get(payee.id);
-        console.log(`🔍 查找收款人 ${payee.id} 的连接ID:`, connectionId);
+        console.log(
+          `🔍 查找收款人 ${payee.id} 的连接ID:`,
+          connectionId,
+          `(当前所有连接: ${Array.from(this.payeeConnections.keys()).join(', ')})`,
+        );
 
         if (connectionId) {
           // 在发送前再次检查订单状态，防止延迟期间被抢单

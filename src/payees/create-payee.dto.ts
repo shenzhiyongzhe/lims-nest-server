@@ -22,6 +22,10 @@ export class CreatePayeeDto {
   payment_limit: number;
 
   @IsNumber()
+  @IsOptional()
+  remaining_limit?: number;
+
+  @IsNumber()
   qrcode_number: number;
 
   @IsDateString()

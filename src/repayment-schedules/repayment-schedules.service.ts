@@ -77,6 +77,7 @@ export class RepaymentSchedulesService {
           status: true,
           paid_amount: true,
           operator_admin_name: true,
+          due_start_date: true,
         },
       });
 
@@ -132,6 +133,7 @@ export class RepaymentSchedulesService {
         }
       }
       let derivedStatus: RepaymentScheduleStatus = currentSchedule.status;
+      const wasPending = currentSchedule.status === 'pending';
       if (inputCapital >= baseCapital && inputInterest >= baseInterest) {
         derivedStatus = 'paid';
       } else if (paidAmount >= 1) {
@@ -144,6 +146,10 @@ export class RepaymentSchedulesService {
         where: { id: data.id },
         data: updatePayload,
       });
+
+      // 如果状态从 pending 变为 paid，更新 last_repayment_date
+      const shouldUpdateLastRepaymentDate =
+        wasPending && derivedStatus === 'paid';
 
       // 3. 同步对应的还款记录（保持一条记录，与本期还款计划金额一致）
       const loanId = currentSchedule.loan_id;
@@ -341,20 +347,27 @@ export class RepaymentSchedulesService {
       // 更新 LoanAccount，同时保存上次编辑的输入值
       // 保存前端传入的原始值，供下次编辑时使用
       const inputFines = data.fines !== undefined ? Number(data.fines) : null;
+      const updateLoanData: any = {
+        receiving_amount: Number(loan?.receiving_amount || 0) + currPaid,
+        paid_capital: Number(loan?.paid_capital || 0) + inputCapital,
+        paid_interest: Number(loan?.paid_interest || 0) + inputInterest,
+        repaid_periods: repaidPeriods,
+        total_fines: Number(loan?.total_fines || 0) + finesValue,
+        // 保存上次编辑的输入值（前端传入的原始值），供下次编辑时使用
+        last_edit_pay_capital: inputCapital > 0 ? inputCapital : null,
+        last_edit_pay_interest: inputInterest > 0 ? inputInterest : null,
+        last_edit_fines:
+          inputFines !== null && inputFines > 0 ? inputFines : null,
+      };
+
+      // 如果状态从 pending 变为 paid，更新 last_repayment_date
+      if (shouldUpdateLastRepaymentDate) {
+        updateLoanData.last_repayment_date = currentSchedule.due_start_date;
+      }
+
       await tx.loanAccount.update({
         where: { id: loanId },
-        data: {
-          receiving_amount: Number(loan?.receiving_amount || 0) + currPaid,
-          paid_capital: Number(loan?.paid_capital || 0) + inputCapital,
-          paid_interest: Number(loan?.paid_interest || 0) + inputInterest,
-          repaid_periods: repaidPeriods,
-          total_fines: Number(loan?.total_fines || 0) + finesValue,
-          // 保存上次编辑的输入值（前端传入的原始值），供下次编辑时使用
-          last_edit_pay_capital: inputCapital > 0 ? inputCapital : null,
-          last_edit_pay_interest: inputInterest > 0 ? inputInterest : null,
-          last_edit_fines:
-            inputFines !== null && inputFines > 0 ? inputFines : null,
-        },
+        data: updateLoanData,
       });
 
       return updatedSchedule;

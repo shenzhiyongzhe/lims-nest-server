@@ -740,6 +740,7 @@ export class OrdersService {
 
         let totalPaidCapital = 0;
         let totalPaidInterest = 0;
+        let lastRepaymentDate: Date | null = null;
 
         // 2. 创建还款记录（绑定到 allSchedules[0]）
         if (!order.payee_id || !order.payee) {
@@ -767,6 +768,8 @@ export class OrdersService {
           });
           totalPaidCapital += scheduleCapital;
           totalPaidInterest += scheduleInterest;
+          // 记录最后一个还款计划的 due_start_date
+          lastRepaymentDate = schedule.due_start_date;
         }
 
         const repaymentRecord = await tx.repaymentRecord.create({
@@ -816,7 +819,8 @@ export class OrdersService {
               },
               repaid_periods: currentRepaidPeriods,
               status: status,
-            },
+              last_repayment_date: lastRepaymentDate,
+            } as any,
           });
         }
 

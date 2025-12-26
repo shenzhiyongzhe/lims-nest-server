@@ -502,7 +502,7 @@ export class StatisticsService {
     });
     const todayBlacklistCount = todayBlacklistLoans.length;
 
-    // 第四行：总金额（所有相关LoanAccount的loan_amount总和）
+    // 第四行：总金额（所有相关LoanAccount的handling_fee + receiving_amount - company_cost总和）
     const allLoanAccounts = await this.prisma.loanAccount.findMany({
       where: {
         id: { in: loanAccountIds },
@@ -511,10 +511,16 @@ export class StatisticsService {
         loan_amount: true,
         handling_fee: true,
         total_fines: true,
+        receiving_amount: true,
+        company_cost: true,
       },
     });
     const totalAmount = allLoanAccounts.reduce(
-      (sum, acc) => sum + Number(acc.loan_amount),
+      (sum, acc) =>
+        sum +
+        Number(acc.handling_fee || 0) +
+        Number(acc.receiving_amount || 0) -
+        Number(acc.company_cost || 0),
       0,
     );
 

@@ -127,10 +127,10 @@ export class RepaymentSchedulesService {
       // 只要本期存在已还金额，则标记为手动收款并记录操作人
       if (currentSchedule.operator_admin_name == null) {
         updatePayload.collected_by_type = 'manual';
-        if (operatorAdminId) {
-          updatePayload.operator_admin_id = operatorAdminId;
-          updatePayload.operator_admin_name = operatorName;
-        }
+      }
+      if (operatorAdminId) {
+        updatePayload.operator_admin_id = operatorAdminId;
+        updatePayload.operator_admin_name = operatorName;
       }
       let derivedStatus: RepaymentScheduleStatus = currentSchedule.status;
       const wasPending = currentSchedule.status === 'pending';
@@ -155,176 +155,6 @@ export class RepaymentSchedulesService {
       const loanId = currentSchedule.loan_id;
       const currPaid = Number(updatedSchedule.paid_amount || 0);
 
-      // 仅当存在已还金额时才需要维护还款记录
-      if (currPaid > 0) {
-        // 获取 LoanAccount 信息
-        const loan = await tx.loanAccount.findUnique({
-          where: { id: loanId },
-          select: { user_id: true },
-        });
-        let payee = null as null | { id: number };
-
-        // 获取操作人名称（用于显示）
-        let operatorDisplayName: string | null = null;
-        if (operatorAdminId) {
-          const op = await tx.admin.findUnique({
-            where: { id: operatorAdminId },
-            select: { username: true },
-          });
-          operatorDisplayName = op?.username ?? null;
-        }
-
-        // 查找是否已有与该还款计划关联的还款记录
-        const existingRecord = await tx.repaymentRecord.findFirst({
-          where: { repayment_schedule_id: updatedSchedule.id },
-          select: {
-            id: true,
-            order_id: true,
-            actual_collector_id: true,
-          },
-        });
-
-        // 确定actual_collector_id的值
-        let actualCollectorId: number | null = null;
-        if (existingRecord) {
-          // 如果已有actual_collector_id，则保持不变
-          if (existingRecord.actual_collector_id) {
-            actualCollectorId = existingRecord.actual_collector_id;
-          } else {
-            // 如果没有actual_collector_id，且更新前paid_capital和paid_interest为0，则使用operatorAdminId
-            const prevPaidCapital = toNumber(currentSchedule.paid_capital);
-            const prevPaidInterest = toNumber(currentSchedule.paid_interest);
-            if (
-              prevPaidCapital === 0 &&
-              prevPaidInterest === 0 &&
-              operatorAdminId
-            ) {
-              actualCollectorId = operatorAdminId;
-            }
-          }
-        } else {
-          // 新建记录：如果更新前paid_capital和paid_interest为0，则使用operatorAdminId
-          const prevPaidCapital = toNumber(currentSchedule.paid_capital);
-          const prevPaidInterest = toNumber(currentSchedule.paid_interest);
-          if (
-            prevPaidCapital === 0 &&
-            prevPaidInterest === 0 &&
-            operatorAdminId
-          ) {
-            actualCollectorId = operatorAdminId;
-          }
-        }
-
-        if (existingRecord) {
-          // 更新已有订单金额
-          if (existingRecord.order_id) {
-            await tx.order.update({
-              where: { id: existingRecord.order_id },
-              data: {
-                amount: currPaid,
-                remark: '来源：编辑还款计划',
-              },
-            });
-          }
-
-          // 更新已有还款记录为当前本期总额
-          await tx.repaymentRecord.update({
-            where: { id: existingRecord.id },
-            data: {
-              paid_amount: currPaid,
-              paid_at: new Date(),
-              payment_method: PaymentMethod.wechat_pay,
-              actual_collector_id: actualCollectorId,
-              remark: '来源：编辑还款计划',
-              collected_by_type: 'manual',
-              paid_capital: inputCapital > 0 ? inputCapital : null,
-              paid_interest: inputInterest > 0 ? inputInterest : null,
-              paid_fines: finesValue > 0 ? finesValue : null,
-            },
-          });
-        } else {
-          // 创建一个完成的订单用于关联新的还款记录（标记为手动收款）
-          const order = await tx.order.create({
-            data: {
-              customer_id: loan!.user_id,
-              loan_id: loanId,
-              amount: currPaid,
-              payment_periods: 1,
-              payment_method: PaymentMethod.wechat_pay,
-              remark: '手动更新还款计划自动生成',
-              status: OrderStatus.completed,
-              payee_id: payee?.id,
-              expires_at: new Date(),
-              collected_by_type: 'manual',
-              processed_by_admin_id: operatorAdminId ?? null,
-              processed_by_admin_name: operatorDisplayName ?? null,
-            },
-          });
-
-          // 创建新还款记录（总额视为本期所有已还）
-          await tx.repaymentRecord.create({
-            data: {
-              loan_id: loanId,
-              user_id: loan!.user_id,
-              paid_amount: currPaid,
-              paid_at: new Date(),
-              payment_method: PaymentMethod.wechat_pay,
-              actual_collector_id: actualCollectorId,
-              remark: '来源：编辑还款计划',
-              order_id: order.id,
-              collected_by_type: 'manual',
-              paid_capital: inputCapital > 0 ? inputCapital : null,
-              paid_interest: inputInterest > 0 ? inputInterest : null,
-              paid_fines: finesValue > 0 ? finesValue : null,
-              repayment_schedule_id: updatedSchedule.id,
-            },
-          });
-        }
-      } else {
-        // 如果本期已还金额被清零，尝试删除与本计划唯一关联的还款记录及其订单
-        const records = await tx.repaymentRecord.findMany({
-          where: { repayment_schedule_id: updatedSchedule.id },
-          select: { id: true, order_id: true },
-        });
-
-        if (records.length > 0) {
-          // 参考 resetSchedule 逻辑，删除与该计划相关的还款记录与订单
-          const orderIds = [...new Set(records.map((r) => r.order_id))];
-
-          await tx.repaymentRecord.deleteMany({
-            where: { repayment_schedule_id: updatedSchedule.id },
-          });
-
-          if (orderIds.length > 0) {
-            const remainingRecords = await tx.repaymentRecord.findMany({
-              where: {
-                order_id: { in: orderIds },
-              },
-              select: {
-                order_id: true,
-              },
-              distinct: ['order_id'],
-            });
-
-            const remainingOrderIds = new Set(
-              remainingRecords.map((r) => r.order_id),
-            );
-
-            const ordersToDelete = orderIds.filter(
-              (id) => !remainingOrderIds.has(id),
-            );
-
-            if (ordersToDelete.length > 0) {
-              await tx.order.deleteMany({
-                where: {
-                  id: { in: ordersToDelete },
-                },
-              });
-            }
-          }
-        }
-      }
-
       // 重新计算 receiving_amount：所有还款计划的(已还本金+已还利息+罚金) 之和，并汇总 LoanAccount 的已还本金和已还利息
       // 计算 repaid_periods：状态为 paid 的计划数量
       const paidSchedules = await tx.repaymentSchedule.findMany({
@@ -342,6 +172,7 @@ export class RepaymentSchedulesService {
           paid_capital: true,
           paid_interest: true,
           total_fines: true,
+          total_periods: true,
         },
       });
       // 更新 LoanAccount，同时保存上次编辑的输入值
@@ -364,6 +195,24 @@ export class RepaymentSchedulesService {
       if (shouldUpdateLastRepaymentDate) {
         updateLoanData.last_repayment_date = currentSchedule.due_start_date;
       }
+      if (repaidPeriods === loan?.total_periods) {
+        updateLoanData.status = 'settled';
+      }
+
+      // 检查当前还款计划的 due_start_date 是否小于当天
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      const scheduleDate = new Date(currentSchedule.due_start_date);
+      scheduleDate.setHours(0, 0, 0, 0);
+
+      // 计算该 loanAccount 关联的所有 RepaymentSchedule.status = 'overdue' 的数量
+      const overdueSchedules = await tx.repaymentSchedule.findMany({
+        where: {
+          loan_id: loanId,
+          status: 'overdue',
+        },
+      });
+      updateLoanData.overdue_count = overdueSchedules.length;
 
       await tx.loanAccount.update({
         where: { id: loanId },
@@ -371,148 +220,6 @@ export class RepaymentSchedulesService {
       });
 
       return updatedSchedule;
-    });
-  }
-
-  /**
-   * 恢复还款计划到初始状态
-   * 删除相关的订单和还款记录，清零已还本金、已还利息、罚金，恢复到待还款状态
-   */
-  async resetSchedule(scheduleId: number): Promise<RepaymentSchedule> {
-    return await this.prisma.$transaction(async (tx) => {
-      // 1. 获取还款计划信息
-      const schedule = await tx.repaymentSchedule.findUnique({
-        where: { id: scheduleId },
-        select: {
-          id: true,
-          loan_id: true,
-          capital: true,
-          interest: true,
-        },
-      });
-
-      if (!schedule) {
-        throw new NotFoundException('还款计划不存在');
-      }
-
-      // 2. 查找所有关联的还款记录
-      const repaymentRecords = await tx.repaymentRecord.findMany({
-        where: {
-          repayment_schedule_id: scheduleId,
-        },
-        select: {
-          id: true,
-          order_id: true,
-        },
-      });
-
-      // 3. 收集所有关联的订单ID（去重）
-      const orderIds = [...new Set(repaymentRecords.map((r) => r.order_id))];
-
-      // 4. 删除还款记录
-      if (repaymentRecords.length > 0) {
-        await tx.repaymentRecord.deleteMany({
-          where: {
-            repayment_schedule_id: scheduleId,
-          },
-        });
-      }
-
-      // 5. 删除关联的订单（只删除没有其他还款记录关联的订单）
-      if (orderIds.length > 0) {
-        // 查找这些订单是否还有其他还款记录关联
-        const remainingRecords = await tx.repaymentRecord.findMany({
-          where: {
-            order_id: { in: orderIds },
-          },
-          select: {
-            order_id: true,
-          },
-          distinct: ['order_id'],
-        });
-
-        const remainingOrderIds = new Set(
-          remainingRecords.map((r) => r.order_id),
-        );
-
-        // 只删除没有其他还款记录关联的订单
-        const ordersToDelete = orderIds.filter(
-          (id) => !remainingOrderIds.has(id),
-        );
-
-        if (ordersToDelete.length > 0) {
-          await tx.order.deleteMany({
-            where: {
-              id: { in: ordersToDelete },
-            },
-          });
-        }
-      }
-
-      // 6. 恢复还款计划到初始状态
-      const resetSchedule = await tx.repaymentSchedule.update({
-        where: { id: scheduleId },
-        data: {
-          paid_capital: 0,
-          paid_interest: 0,
-          fines: 0,
-          paid_amount: 0,
-          status: 'pending',
-          paid_at: null,
-          collected_by_type: null,
-          operator_admin_id: null,
-          operator_admin_name: null,
-        },
-      });
-
-      // 7. 重新计算 LoanAccount 的统计数据
-      const allSchedules = await tx.repaymentSchedule.findMany({
-        where: { loan_id: schedule.loan_id },
-        select: {
-          paid_capital: true,
-          paid_interest: true,
-          fines: true,
-          status: true,
-        },
-      });
-
-      const totalReceiving = allSchedules.reduce(
-        (sum, s) =>
-          sum +
-          Number(s.paid_capital || 0) +
-          Number(s.paid_interest || 0) +
-          Number(s.fines || 0),
-        0,
-      );
-      const loanPaidCapital = allSchedules.reduce(
-        (sum, s) => sum + Number(s.paid_capital || 0),
-        0,
-      );
-      const loanPaidInterest = allSchedules.reduce(
-        (sum, s) => sum + Number(s.paid_interest || 0),
-        0,
-      );
-      const totalFines = allSchedules.reduce(
-        (sum, s) => sum + Number(s.fines || 0),
-        0,
-      );
-      const repaidPeriods = allSchedules.filter(
-        (s) => s.status === 'paid',
-      ).length;
-
-      // 8. 更新 LoanAccount
-      await tx.loanAccount.update({
-        where: { id: schedule.loan_id },
-        data: {
-          receiving_amount: totalReceiving,
-          paid_capital: loanPaidCapital,
-          paid_interest: loanPaidInterest,
-          repaid_periods: repaidPeriods,
-          total_fines: totalFines,
-        },
-      });
-
-      return resetSchedule;
     });
   }
 

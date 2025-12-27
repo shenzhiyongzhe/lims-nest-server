@@ -193,9 +193,7 @@ export class LoanAccountsService {
           Math.max(0, remainingPrincipal - curCapital).toFixed(2),
         );
 
-        // 根据日期判断状态：如果第一期是今天，状态应该是 active
         let scheduleStatus: RepaymentScheduleStatus = 'pending';
-        // 第一期：如果开始日期是今天，状态为 active
         scheduleStatus = this.determineScheduleStatus(d, 'pending');
 
         return {
@@ -214,7 +212,16 @@ export class LoanAccountsService {
       if (rows.length > 0) {
         await tx.repaymentSchedule.createMany({ data: rows });
       }
-
+      const overdueSchedules = await tx.repaymentSchedule.findMany({
+        where: {
+          loan_id: created.id,
+          status: 'overdue',
+        },
+      });
+      await tx.loanAccount.update({
+        where: { id: created.id },
+        data: { overdue_count: overdueSchedules.length },
+      });
       // 直接使用传入的admin_id创建LoanAccountRole
       await tx.loanAccountRole.createMany({
         data: [
@@ -671,6 +678,12 @@ export class LoanAccountsService {
           gte: lastMonthStart,
           lte: lastMonthEnd,
         };
+      } else if (specialFilter === 'thisMonthNegotiated') {
+        where.status = 'negotiated';
+        where.status_changed_at = {
+          gte: thisMonthStart,
+          lte: thisMonthEnd,
+        };
       }
     }
 
@@ -684,8 +697,28 @@ export class LoanAccountsService {
       },
       orderBy: [{ user_id: 'asc' }, { apply_times: 'asc' }],
     });
+
+    // 根据 status 自定义排序：pending 在前，其次 settled，最后是 negotiated 和 blacklist
+    const getStatusOrder = (status: string): number => {
+      if (status === 'pending') return 1;
+      if (status === 'settled') return 2;
+      if (status === 'negotiated') return 3;
+      if (status === 'blacklist') return 4;
+      return 5; // 其他状态排在最后
+    };
+
+    const sortedLoans = loans.sort((a, b) => {
+      const orderA = getStatusOrder(a.status);
+      const orderB = getStatusOrder(b.status);
+      if (orderA !== orderB) {
+        return orderA - orderB;
+      }
+      // 如果 status 顺序相同，保持原来的排序（user_id, apply_times）
+      return 0;
+    });
+
     const map = new Map<number, { user: User; loanAccounts: LoanAccount[] }>();
-    for (const loan of loans) {
+    for (const loan of sortedLoans) {
       const user = loan.user as unknown as User;
       const group = map.get(loan.user_id);
       if (!group) {
@@ -878,6 +911,16 @@ export class LoanAccountsService {
               },
             });
           }
+          const overdueSchedules = await tx.repaymentSchedule.findMany({
+            where: {
+              loan_id: id,
+              status: 'overdue',
+            },
+          });
+          await tx.loanAccount.update({
+            where: { id: id },
+            data: { overdue_count: overdueSchedules.length },
+          });
         }
       }
 
@@ -973,7 +1016,6 @@ export class LoanAccountsService {
     newStatus: LoanAccountStatus,
     options?: {
       settlementCapital?: number;
-      settlementInterest?: number;
       settlementDate?: string;
     },
   ): Promise<LoanAccount> {
@@ -1050,18 +1092,8 @@ export class LoanAccountsService {
         // 以后的计划：状态改为 terminated
         const schedulesToTerminate = schedules.filter((s) => {
           if (!s.due_start_date) return false;
-          const scheduleStart = new Date(
-            Date.UTC(
-              new Date(s.due_start_date).getUTCFullYear(),
-              new Date(s.due_start_date).getUTCMonth(),
-              new Date(s.due_start_date).getUTCDate(),
-              0,
-              0,
-              0,
-              0,
-            ),
-          );
-          return scheduleStart > settlementDateStart;
+          if (s.status !== 'pending') return false;
+          return s.due_start_date >= settlementDateStart;
         });
 
         // 更新当天以后的计划状态为 terminated
@@ -1097,22 +1129,21 @@ export class LoanAccountsService {
 
         // 结清使用的本金和利息（如果前端传入则优先使用）
         const manualCapital = options?.settlementCapital ?? 0;
-        const manualInterest = options?.settlementInterest ?? 0;
-        const hasManualSettlement = manualCapital > 0 || manualInterest > 0;
+        const hasManualSettlement = manualCapital > 0;
 
         let settlementAmount: number;
         let receivingAmount: number;
 
         // 使用用户输入的本金 + 利息 作为本次结清/拉黑金额（如果有）
         if (hasManualSettlement) {
-          settlementAmount = manualCapital + manualInterest;
+          settlementAmount = manualCapital;
         } else {
           settlementAmount = 0;
         }
 
         // 结清/拉黑后的应收总额：
         // = 已还本金 + 已还利息（截至结清前）+ 提前结清的本金 + 提前结清的利息
-        receivingAmount = prevTotalReceiving + manualCapital + manualInterest;
+        receivingAmount = prevTotalReceiving + manualCapital;
 
         // 若有结清/拉黑金额，创建或更新一条提前结清的还款记录 + 完成订单
         if (settlementAmount > 0) {
@@ -1175,7 +1206,6 @@ export class LoanAccountsService {
                 order_id: orderId,
                 // 记录本次结清的本金和利息，便于后续统计
                 paid_capital: hasManualSettlement ? manualCapital : null,
-                paid_interest: hasManualSettlement ? manualInterest : null,
                 paid_fines: null,
               },
             });
@@ -1220,7 +1250,6 @@ export class LoanAccountsService {
                 order_id: order.id,
                 // 记录本次结清的本金和利息，便于后续统计
                 paid_capital: hasManualSettlement ? manualCapital : null,
-                paid_interest: hasManualSettlement ? manualInterest : null,
                 paid_fines: null,
               },
             });
@@ -1234,23 +1263,16 @@ export class LoanAccountsService {
           due_end_date: settlementDateEnd,
         };
 
-        // 如果是黑名单，记录状态变更时间
-        if (newStatus === 'blacklist') {
-          updateData.status_changed_at = new Date();
-        }
+        updateData.status_changed_at = new Date();
 
-        // 如果使用了手动结清的本金和利息，更新到 LoanAccount
+        // 如果使用了手动结清的本金，更新到 LoanAccount
         if (hasManualSettlement) {
           // 前端传入的结清本金/利息是针对「当天及以后」的还款计划，
           // 因此 LoanAccount 层面的已收本金/利息 = 之前历史已收 + 本次结清金额
           updateData.paid_capital = prevPaidCapital + manualCapital;
-          updateData.paid_interest = prevPaidInterest + manualInterest;
           // 仅在前端有传值时记录提前结清部分，避免被写成 0 覆盖原值
           if (options?.settlementCapital !== undefined) {
             (updateData as any).early_settlement_capital = manualCapital;
-          }
-          if (options?.settlementInterest !== undefined) {
-            (updateData as any).early_settlement_interest = manualInterest;
           }
         } else {
           // 否则从还款计划中计算
@@ -1258,12 +1280,7 @@ export class LoanAccountsService {
             (sum, s) => sum + this.toNumber(s.paid_capital),
             0,
           );
-          const loanPaidInterest = schedules.reduce(
-            (sum, s) => sum + this.toNumber(s.paid_interest),
-            0,
-          );
           updateData.paid_capital = loanPaidCapital;
-          updateData.paid_interest = loanPaidInterest;
         }
 
         const updated = await tx.loanAccount.update({

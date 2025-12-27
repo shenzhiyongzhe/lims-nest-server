@@ -423,86 +423,10 @@ export class StatisticsService {
     // 前天（用于昨日逾期判断，因为周期是一天）
     const dayBeforeYesterdayStart = new Date(yesterdayStart);
     dayBeforeYesterdayStart.setDate(dayBeforeYesterdayStart.getDate() - 1);
-
-    // 第一行：今日已还清、今日待还款
-    const todayPaidSchedules = await this.prisma.repaymentSchedule.findMany({
-      where: {
-        loan_id: { in: loanAccountIds },
-        due_start_date: {
-          gte: todayStart,
-          lte: todayEnd,
-        },
-        status: 'paid',
-      },
-      select: { id: true },
-    });
-    const todayPaidCount = todayPaidSchedules.length;
-
-    const todayPendingSchedules = await this.prisma.repaymentSchedule.findMany({
-      where: {
-        loan_id: { in: loanAccountIds },
-        due_start_date: {
-          gte: todayStart,
-          lt: todayEnd,
-        },
-        status: 'pending',
-      },
-      select: { id: true },
-    });
-    const todayPendingCount = todayPendingSchedules.length;
-
-    // 第二行：昨日逾期（周期是一天，所以due_start_date是前天的就是昨天逾期）
-    const yesterdayOverdueSchedules =
-      await this.prisma.repaymentSchedule.findMany({
-        where: {
-          loan_id: { in: loanAccountIds },
-          status: 'overdue',
-          due_start_date: {
-            gte: dayBeforeYesterdayStart,
-            lt: yesterdayStart,
-          },
-        },
-        select: { id: true },
-      });
-    const yesterdayOverdueCount = yesterdayOverdueSchedules.length;
-
-    // 第三行：今日进行中、今日协商中、今日黑名单
-    const activeSchedules = await this.prisma.repaymentSchedule.findMany({
-      where: {
-        loan_id: { in: loanAccountIds },
-        status: 'active',
-      },
-      select: { id: true },
-    });
-    const activeCount = activeSchedules.length;
-
-    const todayNegotiatedLoans = await this.prisma.loanAccount.findMany({
-      where: {
-        id: { in: loanAccountIds },
-        status: 'negotiated',
-        status_changed_at: {
-          gte: todayStart,
-          lte: todayEnd, // DateTime类型字段，使用今天结束时间
-        },
-      },
-      select: { id: true },
-    });
-    const todayNegotiatedCount = todayNegotiatedLoans.length;
-
-    const todayBlacklistLoans = await this.prisma.loanAccount.findMany({
-      where: {
-        id: { in: loanAccountIds },
-        status: 'blacklist',
-        status_changed_at: {
-          gte: todayStart,
-          lte: todayEnd, // DateTime类型字段，使用今天结束时间
-        },
-      },
-      select: { id: true },
-    });
-    const todayBlacklistCount = todayBlacklistLoans.length;
-
-    // 第四行：总金额（所有相关LoanAccount的handling_fee + receiving_amount - company_cost总和）
+    // 对于日期类型字段，使用今天的开始和明天的开始时间范围来精确匹配当天
+    const tomorrowStart = new Date(todayStart);
+    tomorrowStart.setDate(tomorrowStart.getDate() + 1);
+    // 总金额（所有相关LoanAccount的handling_fee + receiving_amount - company_cost总和）
     const allLoanAccounts = await this.prisma.loanAccount.findMany({
       where: {
         id: { in: loanAccountIds },
@@ -523,8 +447,47 @@ export class StatisticsService {
         Number(acc.company_cost || 0),
       0,
     );
+    // 总在库金额（不包括已结清和黑名单）
+    const inStockLoanAccounts = await this.prisma.loanAccount.findMany({
+      where: {
+        id: { in: loanAccountIds },
+        status: {
+          notIn: ['settled', 'blacklist'],
+        },
+      },
+      select: { loan_amount: true },
+    });
+    const totalInStockAmount = inStockLoanAccounts.reduce(
+      (sum, acc) => sum + Number(acc.loan_amount),
+      0,
+    );
+    //总手续费
+    const totalHandlingFee = allLoanAccounts.reduce(
+      (sum, acc) => sum + Number(acc.handling_fee),
+      0,
+    );
 
-    // 第五行：今日收款、昨日收款
+    // 总罚金
+    const totalFines = allLoanAccounts.reduce(
+      (sum, acc) => sum + Number(acc.total_fines),
+      0,
+    );
+    // 总黑名单
+    const totalBlacklistCount = await this.prisma.loanAccount.count({
+      where: {
+        id: { in: loanAccountIds },
+        status: 'blacklist',
+      },
+    });
+    // 总协商中
+    const totalNegotiatedCount = await this.prisma.loanAccount.count({
+      where: {
+        id: { in: loanAccountIds },
+        status: 'negotiated',
+      },
+    });
+    //今日统计
+    // 今日收款
     const todayRepaymentRecords = await this.prisma.repaymentRecord.findMany({
       where: {
         loan_id: { in: loanAccountIds },
@@ -539,7 +502,7 @@ export class StatisticsService {
       (sum, record) => sum + Number(record.paid_amount || 0),
       0,
     );
-
+    // 昨日收款
     const yesterdayRepaymentRecords =
       await this.prisma.repaymentRecord.findMany({
         where: {
@@ -555,29 +518,13 @@ export class StatisticsService {
       (sum, record) => sum + Number(record.paid_amount || 0),
       0,
     );
-
-    // 第六行：总在库金额（不包括已结清和黑名单）
-    const inStockLoanAccounts = await this.prisma.loanAccount.findMany({
-      where: {
-        id: { in: loanAccountIds },
-        status: {
-          notIn: ['settled', 'blacklist'],
-        },
-      },
-      select: { loan_amount: true },
-    });
-    const totalInStockAmount = inStockLoanAccounts.reduce(
-      (sum, acc) => sum + Number(acc.loan_amount),
-      0,
-    );
-
-    // 第七行：今日新增在库、今日结清
+    // 今日新增在库
     const todayNewLoanAccounts = await this.prisma.loanAccount.findMany({
       where: {
         id: { in: loanAccountIds },
         due_start_date: {
           gte: todayStart,
-          lt: nextMonthStart,
+          lt: tomorrowStart,
         },
       },
       select: { loan_amount: true },
@@ -586,14 +533,14 @@ export class StatisticsService {
       (sum, acc) => sum + Number(acc.loan_amount),
       0,
     );
-
+    // 今日已还清
     const todaySettledLoanAccounts = await this.prisma.loanAccount.findMany({
       where: {
         id: { in: loanAccountIds },
         status: 'settled',
         due_end_date: {
           gte: todayStart,
-          lt: nextMonthStart,
+          lt: tomorrowStart,
         },
       },
       select: { loan_amount: true },
@@ -602,8 +549,84 @@ export class StatisticsService {
       (sum, acc) => sum + Number(acc.loan_amount),
       0,
     );
+    // 今日已还清
+    const todayPaidSchedules = await this.prisma.repaymentSchedule.findMany({
+      where: {
+        loan_id: { in: loanAccountIds },
+        due_start_date: {
+          gte: todayStart,
+          lte: todayEnd,
+        },
+        status: 'paid',
+      },
+      select: { id: true },
+    });
+    const todayPaidCount = todayPaidSchedules.length;
+    //今日待还款
+    const todayPendingSchedules = await this.prisma.repaymentSchedule.findMany({
+      where: {
+        loan_id: { in: loanAccountIds },
+        due_start_date: {
+          gte: todayStart,
+          lt: todayEnd,
+        },
+        status: 'pending',
+      },
+      select: { id: true },
+    });
+    const todayPendingCount = todayPendingSchedules.length;
+    //今日进行中
+    const activeSchedules = await this.prisma.repaymentSchedule.findMany({
+      where: {
+        loan_id: { in: loanAccountIds },
+        status: 'active',
+      },
+      select: { id: true },
+    });
+    const activeCount = activeSchedules.length;
+    // 今日协商中
 
-    // 第八行：本月新增、本月结清
+    const todayNegotiatedLoans = await this.prisma.loanAccount.findMany({
+      where: {
+        id: { in: loanAccountIds },
+        status: 'negotiated',
+        status_changed_at: {
+          gte: todayStart,
+          lte: todayEnd, // DateTime类型字段，使用今天结束时间
+        },
+      },
+      select: { id: true },
+    });
+    const todayNegotiatedCount = todayNegotiatedLoans.length;
+    //今日黑名单
+    const todayBlacklistLoans = await this.prisma.loanAccount.findMany({
+      where: {
+        id: { in: loanAccountIds },
+        status: 'blacklist',
+        status_changed_at: {
+          gte: todayStart,
+          lte: todayEnd, // DateTime类型字段，使用今天结束时间
+        },
+      },
+      select: { id: true },
+    });
+    const todayBlacklistCount = todayBlacklistLoans.length;
+    // 昨日逾期
+    const yesterdayOverdueSchedules =
+      await this.prisma.repaymentSchedule.findMany({
+        where: {
+          loan_id: { in: loanAccountIds },
+          status: 'overdue',
+          due_start_date: {
+            gte: dayBeforeYesterdayStart,
+            lt: yesterdayStart,
+          },
+        },
+        select: { id: true },
+      });
+    const yesterdayOverdueCount = yesterdayOverdueSchedules.length;
+
+    // 本月新增
     const thisMonthNewLoanAccounts = await this.prisma.loanAccount.findMany({
       where: {
         id: { in: loanAccountIds },
@@ -618,7 +641,7 @@ export class StatisticsService {
       (sum, acc) => sum + Number(acc.loan_amount),
       0,
     );
-
+    // 本月已还清
     const thisMonthSettledLoanAccounts = await this.prisma.loanAccount.findMany(
       {
         where: {
@@ -636,27 +659,7 @@ export class StatisticsService {
       (sum, acc) => sum + Number(acc.loan_amount),
       0,
     );
-
-    // 第九行：总手续费
-    const totalHandlingFee = allLoanAccounts.reduce(
-      (sum, acc) => sum + Number(acc.handling_fee),
-      0,
-    );
-
-    // 第十行：总罚金、总黑名单
-    const totalFines = allLoanAccounts.reduce(
-      (sum, acc) => sum + Number(acc.total_fines),
-      0,
-    );
-
-    const totalBlacklistCount = await this.prisma.loanAccount.count({
-      where: {
-        id: { in: loanAccountIds },
-        status: 'blacklist',
-      },
-    });
-
-    // 第十一行：本月手续费
+    // 本月手续费
     const thisMonthLoanAccounts = await this.prisma.loanAccount.findMany({
       where: {
         id: { in: loanAccountIds },
@@ -672,7 +675,7 @@ export class StatisticsService {
       0,
     );
 
-    // 第十二行：本月罚金、本月黑名单
+    // 本月罚金
     const thisMonthRepaymentRecords =
       await this.prisma.repaymentRecord.findMany({
         where: {
@@ -688,7 +691,19 @@ export class StatisticsService {
       (sum, record) => sum + Number(record.paid_fines || 0),
       0,
     );
+    //本月协商中
+    const thisMonthNegotiatedCount = await this.prisma.loanAccount.count({
+      where: {
+        id: { in: loanAccountIds },
+        status: 'negotiated',
+        status_changed_at: {
+          gte: thisMonthStart,
+          lte: thisMonthEnd, // DateTime类型字段，使用本月结束时间
+        },
+      },
+    });
 
+    // 本月黑名单
     const thisMonthBlacklistCount = await this.prisma.loanAccount.count({
       where: {
         id: { in: loanAccountIds },
@@ -700,7 +715,7 @@ export class StatisticsService {
       },
     });
 
-    // 第十三行：上个月手续费
+    // 上个月手续费
     const lastMonthLoanAccounts = await this.prisma.loanAccount.findMany({
       where: {
         id: { in: loanAccountIds },
@@ -716,7 +731,7 @@ export class StatisticsService {
       0,
     );
 
-    // 第十四行：上个月罚金、上个月黑名单
+    // 上个月罚金
     const lastMonthRepaymentRecords =
       await this.prisma.repaymentRecord.findMany({
         where: {
@@ -733,6 +748,7 @@ export class StatisticsService {
       0,
     );
 
+    // 上个月黑名单
     const lastMonthBlacklistCount = await this.prisma.loanAccount.count({
       where: {
         id: { in: loanAccountIds },
@@ -745,41 +761,32 @@ export class StatisticsService {
     });
 
     return {
-      // 第一行
+      totalAmount,
+      totalInStockAmount,
+      totalHandlingFee,
+      totalFines,
+      totalBlacklistCount,
+      totalNegotiatedCount,
+      // 今日统计
       todayPaidCount,
       todayPendingCount,
-      // 第二行
       yesterdayOverdueCount,
-      // 第三行
       activeCount,
       todayNegotiatedCount,
       todayBlacklistCount,
-      // 第四行
-      totalAmount,
-      // 第五行
       todayCollection,
       yesterdayCollection,
-      // 第六行
-      totalInStockAmount,
-      // 第七行
       todayNewAmount,
       todaySettledAmount,
-      // 第八行
+      // 本月统计
       thisMonthNewAmount,
       thisMonthSettledAmount,
-      // 第九行
-      totalHandlingFee,
-      // 第十行
-      totalFines,
-      totalBlacklistCount,
-      // 第十一行
       thisMonthHandlingFee,
-      // 第十二行
       thisMonthFines,
+      thisMonthNegotiatedCount,
       thisMonthBlacklistCount,
-      // 第十三行
+      // 上个月统计
       lastMonthHandlingFee,
-      // 第十四行
       lastMonthFines,
       lastMonthBlacklistCount,
     };
@@ -787,26 +794,31 @@ export class StatisticsService {
 
   private getEmptyStatistics() {
     return {
+      totalAmount: 0,
+      totalInStockAmount: 0,
+      totalHandlingFee: 0,
+      totalFines: 0,
+      totalBlacklistCount: 0,
+      totalNegotiatedCount: 0,
+      // 今日统计
       todayPaidCount: 0,
       todayPendingCount: 0,
       yesterdayOverdueCount: 0,
       activeCount: 0,
       todayNegotiatedCount: 0,
       todayBlacklistCount: 0,
-      totalAmount: 0,
       todayCollection: 0,
       yesterdayCollection: 0,
-      totalInStockAmount: 0,
       todayNewAmount: 0,
       todaySettledAmount: 0,
+      // 本月统计
       thisMonthNewAmount: 0,
       thisMonthSettledAmount: 0,
-      totalHandlingFee: 0,
-      totalFines: 0,
-      totalBlacklistCount: 0,
       thisMonthHandlingFee: 0,
       thisMonthFines: 0,
+      thisMonthNegotiatedCount: 0,
       thisMonthBlacklistCount: 0,
+      // 上个月统计
       lastMonthHandlingFee: 0,
       lastMonthFines: 0,
       lastMonthBlacklistCount: 0,

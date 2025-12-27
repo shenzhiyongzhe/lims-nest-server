@@ -157,7 +157,6 @@ export class LoanAccountsController {
     body: {
       status: LoanAccountStatus;
       settlement_capital?: number;
-      settlement_interest?: number;
       settlement_date?: string;
     },
   ): Promise<ApiResponseDto> {
@@ -171,7 +170,6 @@ export class LoanAccountsController {
         body.status,
         {
           settlementCapital: body.settlement_capital,
-          settlementInterest: body.settlement_interest,
           settlementDate: body.settlement_date,
         },
       );

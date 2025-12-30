@@ -7,6 +7,7 @@ import {
   OrderStatus,
   PaymentMethod,
   User,
+  ManagementRoles,
 } from '@prisma/client';
 import { CreateLoanAccountDto } from './dto/create-loanAccount.dto';
 import { UpdateLoanAccountDto } from './dto/update-loanAccount.dto';
@@ -15,13 +16,251 @@ import {
   AdminReportSummaryEntry,
   ExcelExportService,
 } from '../common/excel-export.service';
+import { LoanPredictionService } from '../loan-prediction/loan-prediction.service';
 
 @Injectable()
 export class LoanAccountsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly excelExportService: ExcelExportService,
+    private readonly loanPredictionService: LoanPredictionService,
   ) {}
+
+  /**
+   * 获取归属人列表（根据当前用户角色）
+   * - 管理员：返回所有负责人和风控人
+   * - 负责人：返回与他同一 loanAccounts 下的风控人
+   * - 风控人：返回与他关联的负责人
+   */
+  async getRelatedAdmins(
+    adminId: number,
+    userRole: string,
+  ): Promise<Array<{ id: number; username: string; role: string }>> {
+    // 管理员：返回所有负责人和风控人
+    if (userRole === '管理员') {
+      const admins = await this.prisma.admin.findMany({
+        where: {
+          role: {
+            in: ['负责人', '风控人'],
+          },
+        },
+        select: {
+          id: true,
+          username: true,
+          role: true,
+        },
+        orderBy: {
+          username: 'asc',
+        },
+      });
+      return admins.map((admin) => ({
+        id: admin.id,
+        username: admin.username,
+        role: admin.role,
+      }));
+    }
+
+    // 负责人：获取与他同一 loanAccounts 下的风控人
+    if (userRole === '负责人') {
+      // 1. 获取该负责人关联的所有 loan_account_id
+      const collectorRoles = await this.prisma.loanAccountRole.findMany({
+        where: {
+          admin_id: adminId,
+          role_type: 'collector',
+        },
+        select: {
+          loan_account_id: true,
+        },
+        distinct: ['loan_account_id'],
+      });
+
+      const loanAccountIds = collectorRoles.map((role) => role.loan_account_id);
+
+      if (loanAccountIds.length === 0) {
+        return [];
+      }
+
+      // 2. 获取这些 loan_account_id 对应的所有风控人
+      const riskControllerRoles = await this.prisma.loanAccountRole.findMany({
+        where: {
+          loan_account_id: {
+            in: loanAccountIds,
+          },
+          role_type: 'risk_controller',
+        },
+        select: {
+          admin_id: true,
+        },
+        distinct: ['admin_id'],
+      });
+
+      const riskControllerIds = riskControllerRoles.map(
+        (role) => role.admin_id,
+      );
+
+      if (riskControllerIds.length === 0) {
+        return [];
+      }
+
+      // 3. 获取这些风控人的详细信息
+      const admins = await this.prisma.admin.findMany({
+        where: {
+          id: {
+            in: riskControllerIds,
+          },
+          role: '风控人',
+        },
+        select: {
+          id: true,
+          username: true,
+          role: true,
+        },
+        orderBy: {
+          username: 'asc',
+        },
+      });
+
+      return admins.map((admin) => ({
+        id: admin.id,
+        username: admin.username,
+        role: admin.role,
+      }));
+    }
+
+    // 风控人：获取与他关联的负责人
+    if (userRole === '风控人') {
+      // 1. 获取该风控人关联的所有 loan_account_id
+      const riskControllerRoles = await this.prisma.loanAccountRole.findMany({
+        where: {
+          admin_id: adminId,
+          role_type: 'risk_controller',
+        },
+        select: {
+          loan_account_id: true,
+        },
+        distinct: ['loan_account_id'],
+      });
+
+      const loanAccountIds = riskControllerRoles.map(
+        (role) => role.loan_account_id,
+      );
+
+      if (loanAccountIds.length === 0) {
+        return [];
+      }
+
+      // 2. 获取这些 loan_account_id 对应的所有负责人
+      const collectorRoles = await this.prisma.loanAccountRole.findMany({
+        where: {
+          loan_account_id: {
+            in: loanAccountIds,
+          },
+          role_type: 'collector',
+        },
+        select: {
+          admin_id: true,
+        },
+        distinct: ['admin_id'],
+      });
+
+      const collectorIds = collectorRoles.map((role) => role.admin_id);
+
+      if (collectorIds.length === 0) {
+        return [];
+      }
+
+      // 3. 获取这些负责人的详细信息
+      const admins = await this.prisma.admin.findMany({
+        where: {
+          id: {
+            in: collectorIds,
+          },
+          role: '负责人',
+        },
+        select: {
+          id: true,
+          username: true,
+          role: true,
+        },
+        orderBy: {
+          username: 'asc',
+        },
+      });
+
+      return admins.map((admin) => ({
+        id: admin.id,
+        username: admin.username,
+        role: admin.role,
+      }));
+    }
+
+    return [];
+  }
+
+  /**
+   * 日期计算工具函数
+   */
+  private getTodayRange(): { start: Date; end: Date } {
+    const now = new Date();
+    const start = new Date(
+      Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth(),
+        now.getUTCDate(),
+        0,
+        0,
+        0,
+        0,
+      ),
+    );
+    const end = new Date(
+      Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth(),
+        now.getUTCDate(),
+        23,
+        59,
+        59,
+        999,
+      ),
+    );
+    return { start, end };
+  }
+
+  private getYesterdayRange(): { start: Date; end: Date } {
+    const today = this.getTodayRange();
+    const start = new Date(today.start);
+    start.setUTCDate(start.getUTCDate() - 1);
+    const end = new Date(today.start);
+    end.setUTCMilliseconds(end.getUTCMilliseconds() - 1);
+    return { start, end };
+  }
+
+  private getThisMonthRange(): { start: Date; end: Date } {
+    const now = new Date();
+    const start = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0),
+    );
+    const nextMonthStart = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1, 0, 0, 0, 0),
+    );
+    const end = new Date(nextMonthStart);
+    end.setUTCMilliseconds(end.getUTCMilliseconds() - 1);
+    return { start, end };
+  }
+
+  private getLastMonthRange(): { start: Date; end: Date } {
+    const now = new Date();
+    const start = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1, 0, 0, 0, 0),
+    );
+    const thisMonthStart = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0),
+    );
+    const end = new Date(thisMonthStart);
+    end.setUTCMilliseconds(end.getUTCMilliseconds() - 1);
+    return { start, end };
+  }
 
   /**
    * 判断日期是否已过期（UTC 时间）
@@ -144,7 +383,7 @@ export class LoanAccountsService {
           lender_id: data.lender_id,
           company_cost: data.company_cost,
           handling_fee: data.handling_fee as number,
-          to_hand_ratio: data.to_hand_ratio as number,
+          to_hand_ratio: data.to_hand_ratio,
           due_start_date: startDate,
           due_end_date: endDate,
           total_periods: Number(total_periods),
@@ -245,6 +484,14 @@ export class LoanAccountsService {
       });
       return created;
     });
+
+    // 更新预测数据
+    try {
+      await this.loanPredictionService.updatePredictions(loan);
+    } catch (error) {
+      // 预测更新失败不影响主流程，只记录错误
+      console.error('更新预测数据失败:', error);
+    }
 
     return loan;
   }
@@ -370,14 +617,34 @@ export class LoanAccountsService {
   async findGroupedByUser(
     status?: LoanAccountStatus[],
     adminId?: number,
-    dateFilter?: string,
-    specialFilter?: string,
-  ): Promise<Array<{ user: User; loanAccounts: LoanAccount[] }>> {
+    page?: number,
+    pageSize?: number,
+    filterAdminId?: number,
+    tableName?: 'loanAccounts' | 'repaymentSchedule',
+    startDate?: string,
+    endDate?: string,
+    queryStatus?: string,
+    dateField?:
+      | 'due_start_date'
+      | 'paid_at'
+      | 'status_changed_at'
+      | 'due_date_range',
+  ): Promise<{
+    statistics: {
+      inStock: number;
+      handlingFee: number;
+      fines: number;
+      remainingDebt: number;
+    };
+    data: LoanAccount[];
+    total: number;
+    relatedAdmins: Array<{ id: number; username: string; role: string }>;
+  }> {
     // 获取该admin相关的所有loan_account_ids（权限过滤）
     let loanAccountIds: string[] = [];
-
+    let admin: { role: ManagementRoles } | null;
     if (adminId) {
-      const admin = await this.prisma.admin.findUnique({
+      admin = await this.prisma.admin.findUnique({
         where: { id: adminId },
         select: { role: true },
       });
@@ -396,295 +663,215 @@ export class LoanAccountsService {
         loanAccountIds = loanAccountRoles.map((role) => role.loan_account_id);
 
         if (loanAccountIds.length === 0) {
-          return [];
+          return {
+            statistics: {
+              inStock: 0,
+              handlingFee: 0,
+              fines: 0,
+              remainingDebt: 0,
+            },
+            data: [],
+            total: 0,
+            relatedAdmins: [],
+          };
         }
       }
     }
 
-    // 处理特殊筛选（基于RepaymentSchedule的筛选）
-    if (specialFilter) {
-      const now = new Date();
-      // 使用UTC时间计算日期范围
-      const todayStart = new Date(
-        Date.UTC(
-          now.getUTCFullYear(),
-          now.getUTCMonth(),
-          now.getUTCDate(),
-          0,
-          0,
-          0,
-          0,
-        ),
-      );
-      const todayEnd = new Date(
-        Date.UTC(
-          now.getUTCFullYear(),
-          now.getUTCMonth(),
-          now.getUTCDate(),
-          23,
-          59,
-          59,
-          999,
-        ),
-      );
-      const yesterdayStart = new Date(todayStart);
-      yesterdayStart.setUTCDate(yesterdayStart.getUTCDate() - 1);
-      const dayBeforeYesterdayStart = new Date(yesterdayStart);
-      dayBeforeYesterdayStart.setUTCDate(
-        dayBeforeYesterdayStart.getUTCDate() - 1,
-      );
+    // 参数化查询：处理基于 RepaymentSchedule 的筛选
+    if (tableName === 'repaymentSchedule') {
+      const scheduleWhere: any = {};
 
-      const nextMonthStart = new Date(
-        Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1, 0, 0, 0, 0),
-      );
-      const thisMonthStart = new Date(
-        Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0),
-      );
-      const thisMonthEnd = new Date(nextMonthStart);
-      thisMonthEnd.setUTCMilliseconds(thisMonthEnd.getUTCMilliseconds() - 1);
-
-      const lastMonthStart = new Date(
-        Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1, 0, 0, 0, 0),
-      );
-      const lastMonthEnd = new Date(thisMonthStart);
-      lastMonthEnd.setUTCMilliseconds(lastMonthEnd.getUTCMilliseconds() - 1);
-
-      let scheduleLoanIds: string[] = [];
-
-      switch (specialFilter) {
-        case 'todayPaid':
-          // 今日已还清：due_start_date是今天，paid_at是今天，status=paid
-          const todayPaidSchedules =
-            await this.prisma.repaymentSchedule.findMany({
-              where: {
-                loan_id:
-                  loanAccountIds.length > 0
-                    ? { in: loanAccountIds }
-                    : undefined,
-                due_start_date: {
-                  gte: todayStart,
-                  lt: nextMonthStart,
-                },
-                paid_at: {
-                  gte: todayStart,
-                  lte: todayEnd,
-                },
-                status: 'paid',
-              },
-              select: { loan_id: true },
-              distinct: ['loan_id'],
-            });
-          scheduleLoanIds = todayPaidSchedules.map((s) => s.loan_id);
-          break;
-
-        case 'todayPending':
-          // 今日待还款：due_start_date是今天，status=pending
-          const todayPendingSchedules =
-            await this.prisma.repaymentSchedule.findMany({
-              where: {
-                loan_id:
-                  loanAccountIds.length > 0
-                    ? { in: loanAccountIds }
-                    : undefined,
-                due_start_date: {
-                  gte: todayStart,
-                  lt: nextMonthStart,
-                },
-                status: 'pending',
-              },
-              select: { loan_id: true },
-              distinct: ['loan_id'],
-            });
-          scheduleLoanIds = todayPendingSchedules.map((s) => s.loan_id);
-          break;
-
-        case 'yesterdayOverdue':
-          // 昨日逾期：status=overdue，due_start_date是前天
-          const yesterdayOverdueSchedules =
-            await this.prisma.repaymentSchedule.findMany({
-              where: {
-                loan_id:
-                  loanAccountIds.length > 0
-                    ? { in: loanAccountIds }
-                    : undefined,
-                status: 'overdue',
-                due_start_date: {
-                  gte: dayBeforeYesterdayStart,
-                  lt: yesterdayStart,
-                },
-              },
-              select: { loan_id: true },
-              distinct: ['loan_id'],
-            });
-          scheduleLoanIds = yesterdayOverdueSchedules.map((s) => s.loan_id);
-          break;
-
-        case 'todayActive':
-          // 今日进行中：status=active（所有数据）
-          const todayActiveSchedules =
-            await this.prisma.repaymentSchedule.findMany({
-              where: {
-                loan_id:
-                  loanAccountIds.length > 0
-                    ? { in: loanAccountIds }
-                    : undefined,
-                status: 'active',
-              },
-              select: { loan_id: true },
-              distinct: ['loan_id'],
-            });
-          scheduleLoanIds = todayActiveSchedules.map((s) => s.loan_id);
-          break;
+      // 权限过滤
+      if (loanAccountIds.length > 0) {
+        scheduleWhere.loan_id = { in: loanAccountIds };
       }
 
-      // 如果有特殊筛选结果，使用筛选后的loan_ids
+      // 状态筛选
+      if (queryStatus) {
+        scheduleWhere.status = queryStatus;
+      }
+
+      // 日期筛选
+      if (startDate && endDate && dateField) {
+        // 解析日期字符串
+        // 注意：ISO 字符串会被解析为 UTC 时间，但 Prisma 会将其转换为数据库时区
+        // 为了与统计查询保持一致，我们需要确保日期范围正确
+        const startDateObj = new Date(startDate);
+        const endDateObj = new Date(endDate);
+
+        if (dateField === 'paid_at') {
+          // 对于 paid_at，需要同时检查 due_start_date 和 paid_at
+          scheduleWhere.due_start_date = {
+            gte: startDateObj,
+            lte: endDateObj,
+          };
+        } else if (dateField === 'due_start_date') {
+          // 对于 due_start_date，使用 gte 和 lt（不包含结束日期），与统计查询保持一致
+          // 统计查询使用：gte: dayBeforeYesterdayStart, lt: yesterdayStart
+          scheduleWhere.due_start_date = {
+            gte: startDateObj,
+            lt: endDateObj,
+          };
+        }
+      } else if (startDate && dateField === 'due_start_date') {
+        // 只设置开始日期（用于 yesterdayOverdue 等场景）
+        const startDateObj = new Date(startDate);
+        const endDateObj = endDate ? new Date(endDate) : new Date();
+        scheduleWhere.due_start_date = {
+          gte: startDateObj,
+          lt: endDateObj,
+        };
+      }
+
+      // 查询 RepaymentSchedule
+
+      const schedules = await this.prisma.repaymentSchedule.findMany({
+        where: scheduleWhere,
+        select: { loan_id: true },
+        distinct: ['loan_id'],
+      });
+
+      const scheduleLoanIds = schedules.map((s) => s.loan_id);
+
       if (scheduleLoanIds.length > 0) {
         loanAccountIds =
           loanAccountIds.length > 0
             ? loanAccountIds.filter((id) => scheduleLoanIds.includes(id))
             : scheduleLoanIds;
-
-        if (loanAccountIds.length === 0) {
-          return [];
-        }
-      } else if (
-        specialFilter &&
-        [
-          'todayPaid',
-          'todayPending',
-          'yesterdayOverdue',
-          'todayActive',
-        ].includes(specialFilter)
-      ) {
+      } else {
         // 如果没有匹配的schedule，返回空数组
-        return [];
+        return {
+          statistics: {
+            inStock: 0,
+            handlingFee: 0,
+            fines: 0,
+            remainingDebt: 0,
+          },
+          data: [],
+          total: 0,
+          relatedAdmins: [],
+        };
+      }
+
+      if (loanAccountIds.length === 0) {
+        return {
+          statistics: {
+            inStock: 0,
+            handlingFee: 0,
+            fines: 0,
+            remainingDebt: 0,
+          },
+          data: [],
+          total: 0,
+          relatedAdmins: [],
+        };
+      }
+    }
+
+    // 归属人筛选：如果指定了 filterAdminId，筛选该管理员关联的贷款
+    if (filterAdminId) {
+      const filterRoles = await this.prisma.loanAccountRole.findMany({
+        where: {
+          admin_id: filterAdminId,
+          role_type: {
+            in: ['collector', 'risk_controller'],
+          },
+        },
+        select: {
+          loan_account_id: true,
+        },
+        distinct: ['loan_account_id'],
+      });
+
+      const filterLoanAccountIds = filterRoles.map(
+        (role) => role.loan_account_id,
+      );
+
+      if (filterLoanAccountIds.length > 0) {
+        // 如果已有权限过滤，取交集；否则使用筛选结果
+        if (loanAccountIds.length > 0) {
+          loanAccountIds = loanAccountIds.filter((id) =>
+            filterLoanAccountIds.includes(id),
+          );
+        } else {
+          loanAccountIds = filterLoanAccountIds;
+        }
+      } else {
+        // 如果没有匹配的贷款，返回空结果
+
+        return {
+          statistics: {
+            inStock: 0,
+            handlingFee: 0,
+            fines: 0,
+            remainingDebt: 0,
+          },
+          data: [],
+          total: 0,
+          relatedAdmins: [],
+        };
       }
     }
 
     // 构建基础查询条件
-    let where: any = {};
+    const where: any = {};
 
     // 权限过滤
     if (loanAccountIds.length > 0) {
       where.id = { in: loanAccountIds };
     }
 
-    // 如果状态有值，添加状态过滤
-    if (status && status.length > 0) {
+    // 状态过滤：优先使用新参数，否则使用旧参数
+    // 注意：如果 tableName === 'repaymentSchedule'，queryStatus 是 RepaymentSchedule 的状态，
+    // 不应该用于筛选 LoanAccount.status，因为我们已经通过 RepaymentSchedule 筛选出了符合条件的 loanAccountIds
+    if (tableName !== 'repaymentSchedule') {
+      if (queryStatus) {
+        where.status = queryStatus;
+      } else if (status && status.length > 0) {
+        where.status = { in: status };
+      }
+    } else if (status && status.length > 0) {
+      // 对于 repaymentSchedule 查询，只使用 status 参数（如果有）
       where.status = { in: status };
     }
 
-    // 处理日期筛选和特殊筛选（基于LoanAccount的筛选）
-    if (dateFilter || specialFilter) {
-      const now = new Date();
-      // 使用UTC时间计算日期范围
-      const todayStart = new Date(
-        Date.UTC(
-          now.getUTCFullYear(),
-          now.getUTCMonth(),
-          now.getUTCDate(),
-          0,
-          0,
-          0,
-          0,
-        ),
-      );
-      const todayEnd = new Date(
-        Date.UTC(
-          now.getUTCFullYear(),
-          now.getUTCMonth(),
-          now.getUTCDate(),
-          23,
-          59,
-          59,
-          999,
-        ),
-      );
-      const yesterdayStart = new Date(todayStart);
-      yesterdayStart.setUTCDate(yesterdayStart.getUTCDate() - 1);
+    // 处理基于 LoanAccount 的日期和状态筛选
+    if (tableName === 'loanAccounts' || !tableName) {
+      // 日期筛选
+      if (startDate && endDate && dateField) {
+        const startDateObj = new Date(startDate);
+        const endDateObj = new Date(endDate);
 
-      const thisMonthStart = new Date(
-        Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0),
-      );
-      const nextMonthStart = new Date(
-        Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1, 0, 0, 0, 0),
-      );
-      const thisMonthEnd = new Date(nextMonthStart);
-      thisMonthEnd.setUTCMilliseconds(thisMonthEnd.getUTCMilliseconds() - 1);
-
-      const lastMonthStart = new Date(
-        Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1, 0, 0, 0, 0),
-      );
-      const lastMonthEnd = new Date(thisMonthStart);
-      lastMonthEnd.setUTCMilliseconds(lastMonthEnd.getUTCMilliseconds() - 1);
-
-      // 日期筛选（只在没有特殊筛选或特殊筛选不是基于RepaymentSchedule时使用）
-      if (
-        dateFilter &&
-        ![
-          'todayPaid',
-          'todayPending',
-          'yesterdayOverdue',
-          'todayActive',
-        ].includes(specialFilter || '')
-      ) {
-        if (dateFilter === 'today') {
-          where.due_start_date = {
-            gte: todayStart,
-            lt: nextMonthStart,
+        if (dateField === 'status_changed_at') {
+          where.status_changed_at = {
+            gte: startDateObj,
+            lte: endDateObj,
           };
-        } else if (dateFilter === 'yesterday') {
+        } else if (dateField === 'due_start_date') {
           where.due_start_date = {
-            gte: yesterdayStart,
-            lt: todayStart,
+            gte: startDateObj,
+            lte: endDateObj,
           };
-        } else if (dateFilter === 'thisMonth') {
+        } else if (dateField === 'due_date_range') {
+          // 日期范围筛选：due_start_date >= startDate 且 due_end_date <= endDate
           where.due_start_date = {
-            gte: thisMonthStart,
-            lt: nextMonthStart,
+            gte: startDateObj,
           };
-        } else if (dateFilter === 'lastMonth') {
-          where.due_start_date = {
-            gte: lastMonthStart,
-            lt: thisMonthStart,
+          where.due_end_date = {
+            lte: endDateObj,
           };
         }
       }
+    }
 
-      // 特殊筛选（基于LoanAccount的字段）
-      if (specialFilter === 'todayNegotiated') {
-        where.status = 'negotiated';
-        where.status_changed_at = {
-          gte: todayStart,
-          lte: todayEnd,
-        };
-      } else if (specialFilter === 'todayBlacklist') {
-        where.status = 'blacklist';
-        where.status_changed_at = {
-          gte: todayStart,
-          lte: todayEnd,
-        };
-      } else if (specialFilter === 'allBlacklist') {
-        where.status = 'blacklist';
-      } else if (specialFilter === 'thisMonthBlacklist') {
-        where.status = 'blacklist';
-        where.status_changed_at = {
-          gte: thisMonthStart,
-          lte: thisMonthEnd,
-        };
-      } else if (specialFilter === 'lastMonthBlacklist') {
-        where.status = 'blacklist';
-        where.status_changed_at = {
-          gte: lastMonthStart,
-          lte: lastMonthEnd,
-        };
-      } else if (specialFilter === 'thisMonthNegotiated') {
-        where.status = 'negotiated';
-        where.status_changed_at = {
-          gte: thisMonthStart,
-          lte: thisMonthEnd,
-        };
-      }
+    // 调试：打印查询条件
+    if (queryStatus === 'overdue' && dateField === 'due_start_date') {
+      console.log(
+        'LoanAccount 查询条件 where:',
+        JSON.stringify(where, null, 2),
+      );
+      console.log('loanAccountIds 数量:', loanAccountIds.length);
     }
 
     const loans = await this.prisma.loanAccount.findMany({
@@ -695,11 +882,19 @@ export class LoanAccountsService {
         collector: { select: { id: true, username: true } },
         lender: { select: { id: true, username: true } },
       },
-      orderBy: [{ user_id: 'asc' }, { apply_times: 'asc' }],
     });
 
+    // 调试：打印查询结果
+    if (queryStatus === 'overdue' && dateField === 'due_start_date') {
+      console.log('LoanAccount 查询结果数量:', loans.length);
+      console.log(
+        '查询到的 loan IDs:',
+        loans.map((l) => l.id),
+      );
+    }
+
     // 根据 status 自定义排序：pending 在前，其次 settled，最后是 negotiated 和 blacklist
-    const getStatusOrder = (status: string): number => {
+    const getStatusOrder = (status: LoanAccountStatus): number => {
       if (status === 'pending') return 1;
       if (status === 'settled') return 2;
       if (status === 'negotiated') return 3;
@@ -713,21 +908,116 @@ export class LoanAccountsService {
       if (orderA !== orderB) {
         return orderA - orderB;
       }
-      // 如果 status 顺序相同，保持原来的排序（user_id, apply_times）
-      return 0;
+      // 如果 status 顺序相同，按 apply_times 排序
+      return a.apply_times - b.apply_times;
     });
 
-    const map = new Map<number, { user: User; loanAccounts: LoanAccount[] }>();
-    for (const loan of sortedLoans) {
-      const user = loan.user as unknown as User;
-      const group = map.get(loan.user_id);
-      if (!group) {
-        map.set(loan.user_id, { user, loanAccounts: [loan] });
-      } else {
-        group.loanAccounts.push(loan);
+    // 计算统计数据（基于所有符合筛选条件的数据，不受分页影响）
+    let inStock = 0; // 在库：状态为pending或negotiated的loan_amount总和
+    let handlingFee = 0; // 后扣：所有handling_fee总和
+    let fines = 0; // 罚金：所有total_fines总和
+    let remainingDebt = 0; // 还欠：状态为pending或negotiated的(loan_amount - paid_capital)总和
+
+    sortedLoans.forEach((loan) => {
+      const loanAmount = Number(loan.loan_amount) || 0;
+      const paidCapital = Number(loan.paid_capital) || 0;
+      const handlingFeeValue = Number(loan.handling_fee) || 0;
+      const finesValue = Number(loan.total_fines) || 0;
+
+      // 后扣：所有handling_fee总和
+      handlingFee += handlingFeeValue;
+
+      // 罚金：所有total_fines总和
+      fines += finesValue;
+
+      // 在库和还欠：只统计pending或negotiated状态
+      if (loan.status === 'pending' || loan.status === 'negotiated') {
+        // 在库：状态为pending或negotiated的loan_amount总和
+        inStock += loanAmount;
+
+        // 还欠：状态为pending或negotiated的(loan_amount - paid_capital)总和
+        remainingDebt += Math.max(0, loanAmount - paidCapital);
       }
+    });
+
+    const total = sortedLoans.length;
+
+    // 在分页前获取所有不重复的归属人列表
+    const relatedAdminsMap = new Map<
+      number,
+      { id: number; username: string; role: string }
+    >();
+
+    sortedLoans.forEach((loan) => {
+      // 根据当前用户角色决定提取哪个归属人
+      if (admin && admin.role === '负责人') {
+        // 负责人访问：提取关联的风控人
+        if (loan.risk_controller) {
+          if (!relatedAdminsMap.has(loan.risk_controller.id)) {
+            relatedAdminsMap.set(loan.risk_controller.id, {
+              id: loan.risk_controller.id,
+              username: loan.risk_controller.username,
+              role: '风控人',
+            });
+          }
+        }
+      } else if (admin && admin.role === '风控人') {
+        // 风控人访问：提取关联的负责人
+        if (loan.collector) {
+          if (!relatedAdminsMap.has(loan.collector.id)) {
+            relatedAdminsMap.set(loan.collector.id, {
+              id: loan.collector.id,
+              username: loan.collector.username,
+              role: '负责人',
+            });
+          }
+        }
+      } else if (admin && admin.role === '管理员') {
+        // 管理员访问：提取所有负责人和风控人
+        if (loan.collector) {
+          if (!relatedAdminsMap.has(loan.collector.id)) {
+            relatedAdminsMap.set(loan.collector.id, {
+              id: loan.collector.id,
+              username: loan.collector.username,
+              role: '负责人',
+            });
+          }
+        }
+        if (loan.risk_controller) {
+          if (!relatedAdminsMap.has(loan.risk_controller.id)) {
+            relatedAdminsMap.set(loan.risk_controller.id, {
+              id: loan.risk_controller.id,
+              username: loan.risk_controller.username,
+              role: '风控人',
+            });
+          }
+        }
+      }
+    });
+
+    const relatedAdmins = Array.from(relatedAdminsMap.values()).sort((a, b) =>
+      a.username.localeCompare(b.username),
+    );
+
+    // 分页处理
+    let paginatedLoans = sortedLoans;
+    if (page !== undefined && pageSize !== undefined) {
+      const startIndex = (page - 1) * pageSize;
+      const endIndex = startIndex + pageSize;
+      paginatedLoans = sortedLoans.slice(startIndex, endIndex);
     }
-    return Array.from(map.values());
+
+    return {
+      statistics: {
+        inStock,
+        handlingFee,
+        fines,
+        remainingDebt,
+      },
+      data: paginatedLoans,
+      total,
+      relatedAdmins,
+    };
   }
 
   findByUserId(userId: number): Promise<LoanAccount[]> {

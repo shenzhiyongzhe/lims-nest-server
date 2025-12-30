@@ -19,6 +19,9 @@ import { RepaymentRecordsModule } from './repayment-records/repayment-records.mo
 import { LoanAccountRolesModule } from './loanAccountRoles/loanAccountRoles.module';
 import { OperationLogsModule } from './operation-logs/operation-logs.module';
 import { PayeeRankingModule } from './payee-ranking/payee-ranking.module';
+import { AssetManagementModule } from './asset-management/asset-management.module';
+import { LoanPredictionModule } from './loan-prediction/loan-prediction.module';
+import { BackupModule } from './backup/backup.module';
 @Module({
   imports: [
     ScheduleModule.forRoot(),
@@ -41,6 +44,9 @@ import { PayeeRankingModule } from './payee-ranking/payee-ranking.module';
     LoanAccountRolesModule,
     OperationLogsModule,
     PayeeRankingModule,
+    AssetManagementModule,
+    LoanPredictionModule,
+    BackupModule,
   ],
   controllers: [AppController],
   providers: [AppService],

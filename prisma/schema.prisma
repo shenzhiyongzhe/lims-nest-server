@@ -54,6 +54,8 @@ model Admin {
   loanAccountsAsLender         LoanAccount[]     @relation("LenderLoanAccounts")
   dailyStatistics              DailyStatistics[]
   repaymentRecords             RepaymentRecord[]
+  collectorAssetManagement      CollectorAssetManagement?
+  riskControllerAssetManagement RiskControllerAssetManagement?
 
   @@map("admins")
 }
@@ -390,6 +392,47 @@ model OperationLog {
   @@index([created_at])
   @@index([operation_type])
   @@map("operation_logs")
+}
+
+model CollectorAssetManagement {
+  id                Int      @id @default(autoincrement())
+  admin_id          Int      @unique
+  total_handling_fee Decimal  @default(0) @db.Decimal(10, 2)
+  total_fines       Decimal  @default(0) @db.Decimal(10, 2)
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  admin Admin @relation(fields: [admin_id], references: [id], onDelete: Cascade)
+
+  @@map("collector_asset_management")
+}
+
+model RiskControllerAssetManagement {
+  id           Int      @id @default(autoincrement())
+  admin_id     Int      @unique
+  total_amount Decimal  @default(0) @db.Decimal(10, 2)
+  reduced_amount Decimal @default(0) @db.Decimal(10, 2)
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  admin Admin @relation(fields: [admin_id], references: [id], onDelete: Cascade)
+
+  @@map("risk_controller_asset_management")
+}
+
+model LoanFieldPrediction {
+  id           Int      @id @default(autoincrement())
+  field_name   String   @db.VarChar(50) // loan_amount, to_hand_ratio, capital, interest, company_cost, handling_fee
+  value        Decimal  @db.Decimal(10, 2)
+  frequency    Int      @default(1)
+  last_used_at DateTime @default(now())
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  @@unique([field_name, value])
+  @@index([field_name, frequency])
+  @@index([field_name, value])
+  @@map("loan_field_predictions")
 }
 
 // 聊天消息类型

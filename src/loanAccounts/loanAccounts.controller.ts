@@ -46,9 +46,15 @@ export class LoanAccountsController {
   @Get('grouped-by-user')
   async groupedByUser(
     @Query('status') status: LoanAccountStatus,
-    @Query('dateFilter') dateFilter: string, // 'today', 'yesterday', 'thisMonth', 'lastMonth', 'all'
-    @Query('specialFilter') specialFilter: string, // 'todayPaid', 'todayPending', 'yesterdayOverdue', 'todayActive', 'todayNegotiated', 'todayBlacklist', 'allBlacklist', 'thisMonthBlacklist', 'lastMonthBlacklist'
     @CurrentUser() user: { id: number; role: string },
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('adminId') adminId?: string,
+    @Query('tableName') tableName?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('queryStatus') queryStatus?: string,
+    @Query('dateField') dateField?: string,
   ): Promise<ApiResponseDto> {
     let statusArray: LoanAccountStatus[] = [];
     if (status) {
@@ -58,13 +64,27 @@ export class LoanAccountsController {
         statusArray = [status];
       }
     }
-    const rows = await this.loanAccountsService.findGroupedByUser(
+    const pageNum = page ? parseInt(page, 10) : undefined;
+    const pageSizeNum = pageSize ? parseInt(pageSize, 10) : undefined;
+    const filterAdminId = adminId ? parseInt(adminId, 10) : undefined;
+    const result = await this.loanAccountsService.findGroupedByUser(
       statusArray,
       user.id,
-      dateFilter,
-      specialFilter,
+      pageNum,
+      pageSizeNum,
+      filterAdminId,
+      tableName as 'loanAccounts' | 'repaymentSchedule' | undefined,
+      startDate,
+      endDate,
+      queryStatus,
+      dateField as
+        | 'due_start_date'
+        | 'paid_at'
+        | 'status_changed_at'
+        | 'due_date_range'
+        | undefined,
     );
-    return ResponseHelper.success(rows, '按用户分组获取成功');
+    return ResponseHelper.success(result, '获取贷款记录成功');
   }
 
   @Get('user/:userId')
@@ -198,6 +218,24 @@ export class LoanAccountsController {
         return ResponseHelper.error(error.message, 409); // 409 Conflict
       }
       return ResponseHelper.error(`删除贷款记录失败: ${error.message}`, 500);
+    }
+  }
+
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(ManagementRoles.管理员, ManagementRoles.负责人, ManagementRoles.风控人)
+  @Get('related-admins')
+  async getRelatedAdmins(
+    @CurrentUser() user: { id: number; role: string },
+  ): Promise<ApiResponseDto> {
+    try {
+      const admins = await this.loanAccountsService.getRelatedAdmins(
+        user.id,
+        user.role,
+      );
+      return ResponseHelper.success(admins, '获取归属人列表成功');
+    } catch (error: any) {
+      console.error('获取归属人列表错误:', error);
+      return ResponseHelper.error(`获取归属人列表失败: ${error.message}`, 500);
     }
   }
 }

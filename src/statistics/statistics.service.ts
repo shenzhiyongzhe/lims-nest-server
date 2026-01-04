@@ -44,219 +44,11 @@ export class StatisticsService {
     return businessDayEnd;
   }
 
-  async calculateDailyStatistics(date: Date): Promise<
-    Array<{
-      admin_id: number;
-      admin_name: string;
-      role: string;
-      date: string;
-      total_amount: number;
-      payee_amount: number;
-      receiving_amount: number;
-      transaction_count: number;
-    }>
-  > {
-    // 获取日期字符串（YYYY-MM-DD），避免时区问题
-    const dateStr = date.toISOString().split('T')[0];
-
-    // 构造一个UTC时间的Date对象用于保存到数据库（DATE类型）
-    // 使用日期字符串 + 中午12点（UTC），这样无论什么时区，日期部分都是正确的
-    const dateForDb = new Date(dateStr + 'T12:00:00.000Z');
-
-    // 当天结束时刻（用于累计到当天为止的数据）
-    const endOfDay = new Date(date);
-    endOfDay.setHours(23, 59, 59, 999);
-
-    console.log(`📊 计算 ${dateStr} 的统计数据`);
-    console.log(`  - dateForDb: ${dateForDb.toISOString()}`);
-
-    // 1. 获取所有collector和risk_controller角色的loan_account_roles
-    const roles = await this.prisma.loanAccountRole.findMany({
-      where: {
-        role_type: {
-          in: ['collector', 'risk_controller'],
-        },
-      },
-      include: {
-        admin: {
-          select: {
-            id: true,
-            username: true,
-            role: true,
-          },
-        },
-        loan_account: {
-          select: {
-            id: true,
-            receiving_amount: true,
-          },
-        },
-      },
-    });
-
-    // 如果没有 roles，说明没有 loanAccounts，删除当天的统计数据并返回空数组
-    if (roles.length === 0) {
-      console.log(`⚠️ 没有找到任何 loan_account_roles，清理当天的统计数据`);
-      // 删除当天的统计数据
-      await this.prisma.$executeRaw`
-        DELETE FROM daily_statistics
-        WHERE DATE(date) = ${dateStr}
-      `;
-      console.log(`✅ 已清理 ${dateStr} 的统计数据`);
-      return [];
-    }
-
-    // 2. 按admin_id分组，合并同一人在不同角色下的数据
-    const adminStatsMap = new Map<
-      number,
-      {
-        admin_id: number;
-        admin_name: string;
-        admin_role: string;
-        loan_account_ids: Set<string>;
-      }
-    >();
-
-    for (const role of roles) {
-      const adminId = role.admin_id;
-      const adminName = role.admin.username;
-      const adminRole = role.admin.role;
-      const loanAccountId = role.loan_account_id;
-
-      if (!adminStatsMap.has(adminId)) {
-        adminStatsMap.set(adminId, {
-          admin_id: adminId,
-          admin_name: adminName,
-          admin_role: adminRole,
-          loan_account_ids: new Set(),
-        });
-      }
-
-      const stats = adminStatsMap.get(adminId)!;
-      stats.loan_account_ids.add(loanAccountId);
-    }
-
-    // 3. 为每个admin统计相关的数据，并收集结果
-    const results: Array<{
-      admin_id: number;
-      admin_name: string;
-      role: string;
-      date: string;
-      total_amount: number;
-      payee_amount: number;
-      receiving_amount: number;
-      transaction_count: number;
-    }> = [];
-
-    // 使用事务来确保所有操作的原子性
-    await this.prisma.$transaction(
-      async (tx) => {
-        for (const [adminId, stats] of adminStatsMap.entries()) {
-          const loanIds = Array.from(stats.loan_account_ids);
-
-          // 查询所有相关的repayment_schedules
-          const allSchedules = await tx.repaymentSchedule.findMany({
-            where: {
-              loan_id: {
-                in: loanIds,
-              },
-            },
-            select: {
-              due_amount: true,
-              paid_amount: true,
-              status: true,
-              paid_at: true,
-            },
-          });
-
-          // 计算累计已还金额（从repayment_schedules统计）
-          let payeeAmount = 0;
-          let transactionCount = 0;
-          let receivingAmount = 0;
-
-          for (const schedule of allSchedules) {
-            const dueAmount = Number(schedule.due_amount || 0);
-            const paidAmount = Number(schedule.paid_amount || 0);
-
-            // 累计已还金额
-            if (paidAmount > 0) {
-              payeeAmount += paidAmount;
-            }
-
-            // 统计已还清的记录数（status为paid或paid_amount大于0）
-            if (schedule.status === 'paid' || paidAmount > 0) {
-              transactionCount++;
-            }
-
-            // 计算累计应收金额（未还清的部分）
-            const remaining = dueAmount - paidAmount;
-            if (remaining > 0) {
-              receivingAmount += remaining;
-            }
-          }
-
-          const totalAmount = payeeAmount + receivingAmount;
-
-          console.log(`📈 ${stats.admin_name}(${adminId}) 统计结果:`, {
-            date: date.toISOString().split('T')[0],
-            totalAmount,
-            payeeAmount,
-            receivingAmount,
-            transactionCount,
-            schedulesCount: allSchedules.length,
-          });
-
-          // 收集结果
-          results.push({
-            admin_id: adminId,
-            admin_name: stats.admin_name,
-            role: stats.admin_role,
-            date: dateStr,
-            total_amount: totalAmount,
-            payee_amount: payeeAmount,
-            receiving_amount: receivingAmount,
-            transaction_count: transactionCount,
-          });
-
-          // 4. 注意：此方法使用旧的统计字段结构，已不再写入数据库
-          // 这里只返回计算结果，不写入数据库
-          console.log(
-            `⚠️ calculateDailyStatistics 使用旧字段结构，已弃用。请使用 getTodayAdminStatistics 方法。`,
-          );
-        }
-      },
-      {
-        // 设置事务超时时间为30秒
-        timeout: 30000,
-      },
-    );
-
-    console.log(`✅ ${dateStr} 统计数据已保存，返回 ${results.length} 条记录`);
-    return results;
-  }
-
-  async calculateMissingStatistics(
-    startDate: Date,
-    endDate: Date,
-  ): Promise<void> {
-    const current = new Date(startDate);
-    const end = new Date(endDate);
-
-    while (current <= end) {
-      // 直接计算统计数据（calculateDailyStatistics会处理重复数据）
-      console.log(
-        `🔄 计算缺失的统计数据: ${current.toISOString().split('T')[0]}`,
-      );
-      await this.calculateDailyStatistics(new Date(current));
-
-      current.setDate(current.getDate() + 1);
-    }
-  }
-
-  // 获取collector/risk_controller的详细统计数据（14行指标）
+  // 获取collector/risk_controller的详细统计数据
   async getCollectorDetailedStatistics(
     adminId: number,
     roleType: 'collector' | 'risk_controller',
+    targetDate?: Date,
   ): Promise<any> {
     // 获取该admin相关的所有loan_account_ids
     const roles = await this.prisma.loanAccountRole.findMany({
@@ -275,10 +67,11 @@ export class StatisticsService {
       return this.getEmptyStatistics();
     }
 
-    // 日期计算
-    const now = new Date();
-    const todayStart = this.getBusinessDayStart();
-    const todayEnd = this.getBusinessDayEnd();
+    // 日期计算 - 如果传入了targetDate，使用它；否则使用当前日期
+    const baseDate = targetDate || new Date();
+    const now = baseDate;
+    const todayStart = this.getBusinessDayStart(baseDate);
+    const todayEnd = this.getBusinessDayEnd(baseDate);
     const yesterdayStart = new Date(todayStart);
     yesterdayStart.setDate(yesterdayStart.getDate() - 1);
     const yesterdayEnd = new Date(todayEnd);
@@ -364,6 +157,20 @@ export class StatisticsService {
         status: 'negotiated',
       },
     });
+    // 总在库人数（状态为pending或negotiated）
+    const totalInStockCount = await this.prisma.loanAccount.count({
+      where: {
+        id: { in: loanAccountIds },
+        status: {
+          in: ['pending', 'negotiated'],
+        },
+      },
+    });
+    // 总收金额（所有LoanAccount的receiving_amount总和）
+    const totalReceivedAmount = allLoanAccounts.reduce(
+      (sum, acc) => sum + Number(acc.receiving_amount || 0),
+      0,
+    );
     //今日统计
     // 今日收款
     const todayRepaymentRecords = await this.prisma.repaymentRecord.findMany({
@@ -489,6 +296,64 @@ export class StatisticsService {
       select: { id: true },
     });
     const todayBlacklistCount = todayBlacklistLoans.length;
+    // 今日待收（repaymentSchedule的due_start_date为今天，状态为pending或active的due_amount - paid_capital - paid_interest总和）
+    const todayUnpaidSchedules = await this.prisma.repaymentSchedule.findMany({
+      where: {
+        loan_id: { in: loanAccountIds },
+        due_start_date: {
+          gte: todayStart,
+          lt: tomorrowStart,
+        },
+        status: {
+          in: ['pending', 'active'],
+        },
+      },
+      select: {
+        due_amount: true,
+        paid_capital: true,
+        paid_interest: true,
+      },
+    });
+    const todayUnpaidAmount = todayUnpaidSchedules.reduce(
+      (sum, schedule) =>
+        sum +
+        (Number(schedule.due_amount || 0) -
+          Number(schedule.paid_capital || 0) -
+          Number(schedule.paid_interest || 0)),
+      0,
+    );
+    // 今日后扣（LoanAccount的created_at为今天的handling_fee总和）
+    const todayHandlingFeeLoanAccounts = await this.prisma.loanAccount.findMany(
+      {
+        where: {
+          id: { in: loanAccountIds },
+          created_at: {
+            gte: todayStart,
+            lte: todayEnd,
+          },
+        },
+        select: { handling_fee: true },
+      },
+    );
+    const todayHandlingFee = todayHandlingFeeLoanAccounts.reduce(
+      (sum, acc) => sum + Number(acc.handling_fee || 0),
+      0,
+    );
+    // 今日罚金（repaymentSchedule的due_start_date为今天的fines总和）
+    const todayFinesSchedules = await this.prisma.repaymentSchedule.findMany({
+      where: {
+        loan_id: { in: loanAccountIds },
+        due_start_date: {
+          gte: todayStart,
+          lt: tomorrowStart,
+        },
+      },
+      select: { fines: true },
+    });
+    const todayFines = todayFinesSchedules.reduce(
+      (sum, schedule) => sum + Number(schedule.fines || 0),
+      0,
+    );
     // 昨日逾期
     const yesterdayOverdueSchedules =
       await this.prisma.repaymentSchedule.findMany({
@@ -637,14 +502,39 @@ export class StatisticsService {
         },
       },
     });
+    // 获取昨日总金额（从 DailyStatistics 表查询）
+    const yesterday = new Date(baseDate);
+    yesterday.setDate(yesterday.getDate() - 1);
+    yesterday.setHours(0, 0, 0, 0);
+    const yesterdayDateStr = yesterday.toISOString().split('T')[0];
+    const yesterdayDateForDb = new Date(yesterdayDateStr + 'T12:00:00.000Z');
 
+    const yesterdayStatistics = await this.prisma.dailyStatistics.findUnique({
+      where: {
+        admin_id_date_role: {
+          admin_id: adminId,
+          date: yesterdayDateForDb,
+          role: roleType,
+        },
+      },
+      select: {
+        total_amount: true,
+      },
+    });
+
+    const yesterdayTotalAmount = yesterdayStatistics
+      ? Number(yesterdayStatistics.total_amount)
+      : 0;
     return {
       totalAmount,
+      yesterdayTotalAmount,
       totalInStockAmount,
       totalHandlingFee,
       totalFines,
       totalBlacklistCount,
       totalNegotiatedCount,
+      totalInStockCount,
+      totalReceivedAmount,
       // 今日统计
       todayPaidCount,
       todayPendingCount,
@@ -656,6 +546,9 @@ export class StatisticsService {
       yesterdayCollection,
       todayNewAmount,
       todaySettledAmount,
+      todayUnpaidAmount,
+      todayHandlingFee,
+      todayFines,
       // 本月统计
       thisMonthNewAmount,
       thisMonthSettledAmount,
@@ -678,6 +571,8 @@ export class StatisticsService {
       totalFines: 0,
       totalBlacklistCount: 0,
       totalNegotiatedCount: 0,
+      totalInStockCount: 0,
+      totalReceivedAmount: 0,
       // 今日统计
       todayPaidCount: 0,
       todayPendingCount: 0,
@@ -689,6 +584,9 @@ export class StatisticsService {
       yesterdayCollection: 0,
       todayNewAmount: 0,
       todaySettledAmount: 0,
+      todayUnpaidAmount: 0,
+      todayHandlingFee: 0,
+      todayFines: 0,
       // 本月统计
       thisMonthNewAmount: 0,
       thisMonthSettledAmount: 0,
@@ -703,87 +601,268 @@ export class StatisticsService {
     };
   }
 
+  // 保存每日统计数据到 DailyStatistics 表
+  async saveDailyStatistics(date: Date): Promise<void> {
+    const dateStr = date.toISOString().split('T')[0];
+    const dateForDb = new Date(dateStr + 'T12:00:00.000Z');
+
+    // 获取所有 collector 和 risk_controller 角色
+    const roles = await this.prisma.loanAccountRole.findMany({
+      where: {
+        role_type: {
+          in: ['collector', 'risk_controller'],
+        },
+      },
+      include: {
+        admin: {
+          select: {
+            id: true,
+            username: true,
+          },
+        },
+      },
+      distinct: ['admin_id', 'role_type'],
+    });
+
+    // 按 admin_id + role_type 分组
+    const adminRoleMap = new Map<
+      string,
+      { adminId: number; adminName: string; roleType: string }
+    >();
+    for (const role of roles) {
+      const key = `${role.admin_id}_${role.role_type}`;
+      if (!adminRoleMap.has(key)) {
+        adminRoleMap.set(key, {
+          adminId: role.admin_id,
+          adminName: role.admin.username,
+          roleType: role.role_type,
+        });
+      }
+    }
+
+    // 使用事务批量保存
+    await this.prisma.$transaction(
+      async (tx) => {
+        for (const [, adminRole] of adminRoleMap.entries()) {
+          // 获取统计数据
+          const statistics = await this.getCollectorDetailedStatistics(
+            adminRole.adminId,
+            adminRole.roleType as 'collector' | 'risk_controller',
+            date,
+          );
+
+          // 映射字段：camelCase -> snake_case
+          await tx.dailyStatistics.upsert({
+            where: {
+              admin_id_date_role: {
+                admin_id: adminRole.adminId,
+                date: dateForDb,
+                role: adminRole.roleType,
+              },
+            },
+            create: {
+              admin_id: adminRole.adminId,
+              admin_name: adminRole.adminName,
+              date: dateForDb,
+              role: adminRole.roleType,
+              // 总统计字段
+              total_amount: statistics.totalAmount,
+              total_in_stock_amount: statistics.totalInStockAmount,
+              total_handling_fee: statistics.totalHandlingFee,
+              total_fines: statistics.totalFines,
+              total_blacklist_count: statistics.totalBlacklistCount,
+              total_negotiated_count: statistics.totalNegotiatedCount,
+              total_in_stock_count: statistics.totalInStockCount,
+              total_received_amount: statistics.totalReceivedAmount,
+              // 今日统计字段
+              today_paid_count: statistics.todayPaidCount,
+              today_pending_count: statistics.todayPendingCount,
+              yesterday_overdue_count: statistics.yesterdayOverdueCount,
+              active_count: statistics.activeCount,
+              today_negotiated_count: statistics.todayNegotiatedCount,
+              today_blacklist_count: statistics.todayBlacklistCount,
+              today_collection: statistics.todayCollection,
+              yesterday_collection: statistics.yesterdayCollection,
+              today_new_amount: statistics.todayNewAmount,
+              today_settled_amount: statistics.todaySettledAmount,
+              today_unpaid_amount: statistics.todayUnpaidAmount,
+              today_handling_fee: statistics.todayHandlingFee,
+              today_fines: statistics.todayFines,
+              // 本月统计字段
+              this_month_new_amount: statistics.thisMonthNewAmount,
+              this_month_settled_amount: statistics.thisMonthSettledAmount,
+              this_month_handling_fee: statistics.thisMonthHandlingFee,
+              this_month_fines: statistics.thisMonthFines,
+              this_month_negotiated_count: statistics.thisMonthNegotiatedCount,
+              this_month_blacklist_count: statistics.thisMonthBlacklistCount,
+              // 上个月统计字段
+              last_month_handling_fee: statistics.lastMonthHandlingFee,
+              last_month_fines: statistics.lastMonthFines,
+              last_month_blacklist_count: statistics.lastMonthBlacklistCount,
+            },
+            update: {
+              // 总统计字段
+              total_amount: statistics.totalAmount,
+              total_in_stock_amount: statistics.totalInStockAmount,
+              total_handling_fee: statistics.totalHandlingFee,
+              total_fines: statistics.totalFines,
+              total_blacklist_count: statistics.totalBlacklistCount,
+              total_negotiated_count: statistics.totalNegotiatedCount,
+              total_in_stock_count: statistics.totalInStockCount,
+              total_received_amount: statistics.totalReceivedAmount,
+              // 今日统计字段
+              today_paid_count: statistics.todayPaidCount,
+              today_pending_count: statistics.todayPendingCount,
+              yesterday_overdue_count: statistics.yesterdayOverdueCount,
+              active_count: statistics.activeCount,
+              today_negotiated_count: statistics.todayNegotiatedCount,
+              today_blacklist_count: statistics.todayBlacklistCount,
+              today_collection: statistics.todayCollection,
+              yesterday_collection: statistics.yesterdayCollection,
+              today_new_amount: statistics.todayNewAmount,
+              today_settled_amount: statistics.todaySettledAmount,
+              today_unpaid_amount: statistics.todayUnpaidAmount,
+              today_handling_fee: statistics.todayHandlingFee,
+              today_fines: statistics.todayFines,
+              // 本月统计字段
+              this_month_new_amount: statistics.thisMonthNewAmount,
+              this_month_settled_amount: statistics.thisMonthSettledAmount,
+              this_month_handling_fee: statistics.thisMonthHandlingFee,
+              this_month_fines: statistics.thisMonthFines,
+              this_month_negotiated_count: statistics.thisMonthNegotiatedCount,
+              this_month_blacklist_count: statistics.thisMonthBlacklistCount,
+              // 上个月统计字段
+              last_month_handling_fee: statistics.lastMonthHandlingFee,
+              last_month_fines: statistics.lastMonthFines,
+              last_month_blacklist_count: statistics.lastMonthBlacklistCount,
+            },
+          });
+        }
+      },
+      {
+        timeout: 60000, // 60秒超时
+      },
+    );
+  }
+
+  // 获取昨日统计数据
+  async getYesterdayStatistics(
+    adminId: number,
+    roleType: 'collector' | 'risk_controller',
+  ): Promise<any> {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    yesterday.setHours(0, 0, 0, 0);
+    const dateStr = yesterday.toISOString().split('T')[0];
+    const dateForDb = new Date(dateStr + 'T12:00:00.000Z');
+
+    const statistics = await this.prisma.dailyStatistics.findUnique({
+      where: {
+        admin_id_date_role: {
+          admin_id: adminId,
+          date: dateForDb,
+          role: roleType,
+        },
+      },
+    });
+
+    if (!statistics) {
+      return this.getEmptyStatistics();
+    }
+
+    // 将数据库字段名转换为 camelCase
+    return {
+      totalAmount: Number(statistics.total_amount),
+      totalInStockAmount: Number(statistics.total_in_stock_amount),
+      totalHandlingFee: Number(statistics.total_handling_fee),
+      totalFines: Number(statistics.total_fines),
+      totalBlacklistCount: statistics.total_blacklist_count,
+      totalNegotiatedCount: statistics.total_negotiated_count,
+      totalInStockCount: statistics.total_in_stock_count,
+      totalReceivedAmount: Number(statistics.total_received_amount),
+      // 今日统计字段
+      todayPaidCount: statistics.today_paid_count,
+      todayPendingCount: statistics.today_pending_count,
+      yesterdayOverdueCount: statistics.yesterday_overdue_count,
+      activeCount: statistics.active_count,
+      todayNegotiatedCount: statistics.today_negotiated_count,
+      todayBlacklistCount: statistics.today_blacklist_count,
+      todayCollection: Number(statistics.today_collection),
+      yesterdayCollection: Number(statistics.yesterday_collection),
+      todayNewAmount: Number(statistics.today_new_amount),
+      todaySettledAmount: Number(statistics.today_settled_amount),
+      todayUnpaidAmount: Number(statistics.today_unpaid_amount),
+      todayHandlingFee: Number(statistics.today_handling_fee),
+      todayFines: Number(statistics.today_fines),
+      // 本月统计字段
+      thisMonthNewAmount: Number(statistics.this_month_new_amount),
+      thisMonthSettledAmount: Number(statistics.this_month_settled_amount),
+      thisMonthHandlingFee: Number(statistics.this_month_handling_fee),
+      thisMonthFines: Number(statistics.this_month_fines),
+      thisMonthNegotiatedCount: statistics.this_month_negotiated_count,
+      thisMonthBlacklistCount: statistics.this_month_blacklist_count,
+      // 上个月统计字段
+      lastMonthHandlingFee: Number(statistics.last_month_handling_fee),
+      lastMonthFines: Number(statistics.last_month_fines),
+      lastMonthBlacklistCount: statistics.last_month_blacklist_count,
+    };
+  }
+
   async getAdminStatistics(): Promise<any[]> {
+    // 获取所有 collector 和 risk_controller 角色
     const roles = await this.prisma.loanAccountRole.findMany({
       where: {
         role_type: { in: ['collector', 'risk_controller'] },
       },
       include: {
-        admin: true,
-        loan_account: true,
+        admin: {
+          select: {
+            id: true,
+            username: true,
+          },
+        },
       },
+      distinct: ['admin_id', 'role_type'],
     });
 
     // 按 admin_id + role_type 分组（同一个admin可能同时是collector和risk_controller）
-    const adminStats = new Map<string, any>();
+    const adminStatsMap = new Map<
+      string,
+      { adminId: number; adminName: string; roleType: string }
+    >();
 
     for (const role of roles) {
       const key = `${role.admin_id}_${role.role_type}`;
-      if (!adminStats.has(key)) {
-        adminStats.set(key, {
-          admin_id: role.admin_id,
-          admin_name: role.admin.username,
-          role: role.role_type, // 使用role_type而不是admin.role
-          totalAmount: 0, // 总金额 = Σ(receiving_amount) − Σ(company_cost)
-          inStockCount: 0, // 在库人数 = 状态 in [pending,negotiated] 的 LoanAccount 数量
-          inStockAmount: 0, // 在库金额 = 状态 in [pending,negotiated] 的 Σ(loan_amount)
-          totalReceivingAmount: 0, // 已收金额 = Σ(receiving_amount)（包含罚金）
-          totalUnpaidCapital: 0, // 未收本金 = 状态 in [pending,negotiated] 的 Σ(loan_amount − paid_capital)
-          totalHandlingFee: 0, // 后扣 = Σ(handling_fee)
-          totalFines: 0, // 罚金 = Σ(total_fines)
-          negotiatedCount: 0, // 协商 = 状态 negotiated 的数量
-          blacklistCount: 0, // 黑名单 = 状态 blacklist 的数量
-          loanAccounts: new Set<string>(),
+      if (!adminStatsMap.has(key)) {
+        adminStatsMap.set(key, {
+          adminId: role.admin_id,
+          adminName: role.admin.username,
+          roleType: role.role_type,
         });
       }
-      adminStats.get(key).loanAccounts.add(role.loan_account_id);
     }
 
-    for (const [key, stats] of adminStats.entries()) {
-      const loanAccounts = await this.prisma.loanAccount.findMany({
-        where: { id: { in: Array.from(stats.loanAccounts) } },
+    // 对每个 admin 的每个角色，调用 getCollectorDetailedStatistics
+    const results: any[] = [];
+    for (const [, adminRole] of adminStatsMap.entries()) {
+      const statistics = await this.getCollectorDetailedStatistics(
+        adminRole.adminId,
+        adminRole.roleType as 'collector' | 'risk_controller',
+      );
+      const yesterdayStatistics = await this.getYesterdayStatistics(
+        adminRole.adminId,
+        adminRole.roleType as 'collector' | 'risk_controller',
+      );
+      // 添加 admin_id, admin_name, role 字段以保持向后兼容
+      results.push({
+        admin_id: adminRole.adminId,
+        admin_name: adminRole.adminName,
+        role: adminRole.roleType,
+        ...statistics,
+        yesterday_statistics: yesterdayStatistics,
       });
-
-      for (const acc of loanAccounts) {
-        // 总金额 = Σ(receiving_amount) − Σ(company_cost)
-        stats.totalAmount +=
-          Number(acc.receiving_amount || 0) -
-          Number(acc.company_cost || 0) +
-          Number(acc.handling_fee || 0);
-
-        // 已收金额 = Σ(receiving_amount)（包含罚金）
-        stats.totalReceivingAmount += Number(acc.receiving_amount || 0);
-
-        // 后扣 = Σ(handling_fee)
-        stats.totalHandlingFee += Number(acc.handling_fee || 0);
-
-        // 罚金 = Σ(total_fines)
-        stats.totalFines += Number(acc.total_fines || 0);
-
-        // 在库相关统计：状态 in [pending, negotiated]
-        if (acc.status === 'pending' || acc.status === 'negotiated') {
-          // 在库人数
-          stats.inStockCount++;
-          // 在库金额 = 状态 in [pending, negotiated] 的 Σ(loan_amount)
-          stats.inStockAmount += Number(acc.loan_amount);
-          // 未收本金 = 状态 in [pending, negotiated] 的 Σ(loan_amount − paid_capital)
-          stats.totalUnpaidCapital +=
-            Number(acc.loan_amount) - Number(acc.paid_capital || 0);
-        }
-
-        // 协商 = 状态 negotiated 的数量
-        if (acc.status === 'negotiated') {
-          stats.negotiatedCount++;
-        }
-
-        // 黑名单 = 状态 blacklist 的数量
-        if (acc.status === 'blacklist') {
-          stats.blacklistCount++;
-        }
-      }
-      delete stats.loanAccounts; // Clean up
     }
 
-    return Array.from(adminStats.values());
+    return results;
   }
 }

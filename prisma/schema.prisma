@@ -322,14 +322,45 @@ model DailyStatistics {
   admin_name        String   @db.VarChar(10)
   date              DateTime @db.Date
   role              String   @db.VarChar(20) // 'collector' or 'risk_controller'
-  new_in_stock_amount      Decimal  @db.Decimal(12, 2) @default(0) // 新增在库
-  cleared_off_amount        Decimal  @db.Decimal(12, 2) @default(0) // 离库结清
-  total_received           Decimal  @db.Decimal(12, 2) @default(0) // 已收
-  total_unpaid             Decimal  @db.Decimal(12, 2) @default(0) // 未收
-  total_handling_fee        Decimal  @db.Decimal(12, 2) @default(0) // 后扣
-  total_fines              Decimal  @db.Decimal(12, 2) @default(0) // 罚金
-  negotiated_count         Int      @default(0) // 协商
-  blacklist_count          Int      @default(0) // 黑名单
+  
+  // 总统计字段
+  total_amount              Decimal  @db.Decimal(12, 2) @default(0) // 总金额
+  total_in_stock_amount     Decimal  @db.Decimal(12, 2) @default(0) // 总在库金额
+  total_handling_fee        Decimal  @db.Decimal(12, 2) @default(0) // 总手续费
+  total_fines               Decimal  @db.Decimal(12, 2) @default(0) // 总罚金
+  total_blacklist_count     Int      @default(0) // 总黑名单数
+  total_negotiated_count    Int      @default(0) // 总协商数
+  total_in_stock_count      Int      @default(0) // 总在库人数
+  total_received_amount      Decimal  @db.Decimal(12, 2) @default(0) // 总收金额
+  
+  // 今日统计字段
+  today_paid_count          Int      @default(0) // 今日已还清期数
+  today_pending_count       Int      @default(0) // 今日待还款期数
+  yesterday_overdue_count   Int      @default(0) // 昨日逾期数
+  active_count              Int      @default(0) // 进行中期数
+  today_negotiated_count    Int      @default(0) // 今日协商数
+  today_blacklist_count     Int      @default(0) // 今日黑名单数
+  today_collection          Decimal  @db.Decimal(12, 2) @default(0) // 今日收款
+  yesterday_collection      Decimal  @db.Decimal(12, 2) @default(0) // 昨日收款
+  today_new_amount          Decimal  @db.Decimal(12, 2) @default(0) // 今日新增在库
+  today_settled_amount      Decimal  @db.Decimal(12, 2) @default(0) // 今日离库结清
+  today_unpaid_amount       Decimal  @db.Decimal(12, 2) @default(0) // 今日待收
+  today_handling_fee        Decimal  @db.Decimal(12, 2) @default(0) // 今日后扣
+  today_fines               Decimal  @db.Decimal(12, 2) @default(0) // 今日罚金
+  
+  // 本月统计字段
+  this_month_new_amount     Decimal  @db.Decimal(12, 2) @default(0) // 本月新增
+  this_month_settled_amount Decimal  @db.Decimal(12, 2) @default(0) // 本月已还清
+  this_month_handling_fee   Decimal  @db.Decimal(12, 2) @default(0) // 本月手续费
+  this_month_fines          Decimal  @db.Decimal(12, 2) @default(0) // 本月罚金
+  this_month_negotiated_count Int    @default(0) // 本月协商数
+  this_month_blacklist_count  Int    @default(0) // 本月黑名单数
+  
+  // 上个月统计字段
+  last_month_handling_fee   Decimal  @db.Decimal(12, 2) @default(0) // 上个月手续费
+  last_month_fines          Decimal  @db.Decimal(12, 2) @default(0) // 上个月罚金
+  last_month_blacklist_count Int      @default(0) // 上个月黑名单数
+  
   created_at        DateTime @default(now())
   updated_at        DateTime @updatedAt
 

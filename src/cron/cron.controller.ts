@@ -60,40 +60,4 @@ export class CronController {
       );
     }
   }
-
-  /**
-   * 手动触发每日统计计算任务
-   * POST /cron/trigger/statistics
-   */
-  @Post('trigger/statistics')
-  @HttpCode(HttpStatus.OK)
-  async triggerStatistics(): Promise<ApiResponseDto> {
-    try {
-      await this.statisticsCronService.handleDailyStatisticsCalculation();
-      return ResponseHelper.success(null, '每日统计计算任务执行成功');
-    } catch (error: any) {
-      return ResponseHelper.error(
-        `每日统计计算任务执行失败: ${error.message}`,
-        500,
-      );
-    }
-  }
-
-  /**
-   * 手动触发缺失统计数据检查任务
-   * POST /cron/trigger/missing-statistics
-   */
-  @Post('trigger/missing-statistics')
-  @HttpCode(HttpStatus.OK)
-  async triggerMissingStatistics(): Promise<ApiResponseDto> {
-    try {
-      await this.statisticsCronService.handleMissingStatisticsCalculation();
-      return ResponseHelper.success(null, '缺失统计数据检查任务执行成功');
-    } catch (error: any) {
-      return ResponseHelper.error(
-        `缺失统计数据检查任务执行失败: ${error.message}`,
-        500,
-      );
-    }
-  }
 }

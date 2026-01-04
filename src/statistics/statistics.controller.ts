@@ -40,17 +40,4 @@ export class StatisticsController {
     const statistics = await this.statisticsService.getAdminStatistics();
     return ResponseHelper.success(statistics, '管理员统计数据获取成功');
   }
-
-  @Post('calculate')
-  async calculateStatistics(@Body() body: CalculateStatisticsDto) {
-    const { date } = body;
-    const targetDate = new Date(date);
-
-    await this.statisticsService.calculateDailyStatistics(targetDate);
-
-    return ResponseHelper.success(
-      `已计算 ${date} 的统计数据`,
-      '统计数据计算成功',
-    );
-  }
 }

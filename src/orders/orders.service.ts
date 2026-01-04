@@ -421,11 +421,7 @@ export class OrdersService {
   /**
    * 更新订单支付反馈
    */
-  async updatePaymentFeedback(
-    adminId: number,
-    id: string,
-    paymentFeedback: PaymentFeedback,
-  ) {
+  async updatePaymentFeedback(id: string, paymentFeedback: PaymentFeedback) {
     if (!id || !paymentFeedback) {
       throw new BadRequestException('缺少必要参数');
     }
@@ -819,7 +815,6 @@ export class OrdersService {
               },
               repaid_periods: currentRepaidPeriods,
               status: status,
-              last_repayment_date: lastRepaymentDate,
             } as any,
           });
         }

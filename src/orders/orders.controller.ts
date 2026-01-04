@@ -25,12 +25,12 @@ import { CreateOrderDto } from './dto/create-order.dto';
 import { Roles } from 'src/auth/roles.decorator';
 
 @Controller('orders')
-@UseGuards(AuthGuard, RolesGuard)
-@Roles(ManagementRoles.管理员, ManagementRoles.收款人)
 export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
 
   @Get()
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(ManagementRoles.管理员, ManagementRoles.收款人)
   async getOrders(
     @CurrentUser() user: { id: number },
     @Query('status') status?: OrderStatus,
@@ -46,6 +46,8 @@ export class OrdersController {
   }
 
   @Post()
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(ManagementRoles.收款人)
   async create(
     @CurrentUser() user: { id: number },
     @Body()
@@ -56,6 +58,8 @@ export class OrdersController {
   }
 
   @Put()
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(ManagementRoles.收款人)
   async update(
     @CurrentUser() user: { id: number },
     @Body() body: { id: string; status: OrderStatus },
@@ -70,14 +74,12 @@ export class OrdersController {
 
   @Put('payment-feedback')
   async updatePaymentFeedback(
-    @CurrentUser() user: { id: number },
     @Body() body: { id: string; payment_feedback: PaymentFeedback },
   ): Promise<ApiResponseDto> {
     if (!body.id || !body.payment_feedback) {
       return ResponseHelper.error('缺少必要参数', 400);
     }
     const updated = await this.ordersService.updatePaymentFeedback(
-      user.id,
       body.id,
       body.payment_feedback,
     );
@@ -85,6 +87,8 @@ export class OrdersController {
   }
 
   @Put('review-status')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(ManagementRoles.收款人)
   async updateReviewStatus(
     @CurrentUser() user: { id: number },
     @Body()
@@ -103,6 +107,7 @@ export class OrdersController {
   }
 
   @Post('partial-payment')
+  @UseGuards(AuthGuard, RolesGuard)
   async partialPayment(
     @CurrentUser() user: { id: number },
     @Body() body: { id: string; paid_amount: number },
@@ -124,6 +129,8 @@ export class OrdersController {
   }
 
   @Get('review')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(ManagementRoles.收款人)
   async getReviewOrders(
     @CurrentUser() user: { id: number },
     @Query('review_status') reviewStatus?: ReviewStatus,
@@ -138,6 +145,8 @@ export class OrdersController {
   }
 
   @Post('review')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(ManagementRoles.收款人)
   async reviewOrder(
     @CurrentUser() user: { id: number },
     @Body() body: { order_id: string; actual_paid_amount: number },
@@ -157,6 +166,7 @@ export class OrdersController {
     );
     return ResponseHelper.success(updated, '审核成功');
   }
+  @UseGuards(AuthGuard, RolesGuard)
   @Roles(ManagementRoles.负责人)
   @Get('manual-processing')
   async getManualProcessingOrders(
@@ -166,6 +176,7 @@ export class OrdersController {
     return ResponseHelper.success(orders, '获取手动处理订单成功');
   }
 
+  @UseGuards(AuthGuard, RolesGuard)
   @Roles(ManagementRoles.负责人)
   @Post('manual-processing/:orderId/process')
   async processManualOrder(
@@ -198,6 +209,7 @@ export class OrdersController {
   }
 
   @Delete(':id')
+  @UseGuards(AuthGuard, RolesGuard)
   async deleteOrder(
     @CurrentUser() user: { id: number },
     @Param('id') id: string,

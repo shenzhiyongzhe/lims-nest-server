@@ -4,10 +4,10 @@ export class UpdateCollectorAssetDto {
   @IsNumber()
   @IsOptional()
   @Min(0)
-  total_handling_fee?: number;
+  reduced_handling_fee?: number;
 
   @IsNumber()
   @IsOptional()
   @Min(0)
-  total_fines?: number;
+  reduced_fines?: number;
 }

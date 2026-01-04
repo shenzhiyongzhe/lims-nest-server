@@ -266,10 +266,6 @@ export class EventsService {
         continue;
       }
 
-      console.log(
-        `✅ 收款人 ${payee.id} 有 ${payee.qrcode.length} 个匹配的二维码`,
-      );
-
       let priority = 0;
       let delay = 0;
 
@@ -292,7 +288,7 @@ export class EventsService {
         customer.address === payee.address
       ) {
         priority += 500;
-        delay = 10_000;
+        delay = 3_000;
       }
 
       if (historyCount > 0) {
@@ -300,7 +296,7 @@ export class EventsService {
         delay = 1;
       }
 
-      if (delay === 0) delay = 30_000;
+      if (delay === 0) delay = 10_000;
       payeePriorities.push({
         payee,
         priority,

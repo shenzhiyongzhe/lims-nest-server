@@ -88,4 +88,9 @@ export class CreateLoanAccountDto {
   @IsString()
   @IsOptional()
   remark?: string;
+
+  @IsString()
+  @IsOptional()
+  @Length(0, 2)
+  ownership?: string;
 }

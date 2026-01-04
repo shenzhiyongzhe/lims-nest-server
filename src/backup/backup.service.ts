@@ -279,7 +279,6 @@ export class BackupService {
       'last_edit_pay_interest',
       'last_edit_fines',
       'early_settlement_capital',
-      'last_repayment_date',
       'overdue_count',
     ];
 

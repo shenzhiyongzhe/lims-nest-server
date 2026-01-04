@@ -133,11 +133,12 @@ export class RepaymentSchedulesService {
         updatePayload.operator_admin_name = operatorName;
       }
       let derivedStatus: RepaymentScheduleStatus = currentSchedule.status;
-      const wasPending = currentSchedule.status === 'pending';
       if (inputCapital >= baseCapital && inputInterest >= baseInterest) {
         derivedStatus = 'paid';
       } else if (paidAmount >= 1) {
         derivedStatus = 'active';
+      } else {
+        derivedStatus = 'pending';
       }
       updatePayload.status = derivedStatus;
       updatePayload.paid_at = new Date();
@@ -147,15 +148,10 @@ export class RepaymentSchedulesService {
         data: updatePayload,
       });
 
-      // 如果状态从 pending 变为 paid，更新 last_repayment_date
-      const shouldUpdateLastRepaymentDate =
-        wasPending && derivedStatus === 'paid';
-
       // 3. 同步对应的还款记录（保持一条记录，与本期还款计划金额一致）
       const loanId = currentSchedule.loan_id;
-      const currPaid = Number(updatedSchedule.paid_amount || 0);
 
-      // 重新计算 receiving_amount：所有还款计划的(已还本金+已还利息+罚金) 之和，并汇总 LoanAccount 的已还本金和已还利息
+      // 重新计算 receiving_amount、paid_capital、paid_interest
       // 计算 repaid_periods：状态为 paid 的计划数量
       const paidSchedules = await tx.repaymentSchedule.findMany({
         where: {
@@ -164,26 +160,64 @@ export class RepaymentSchedulesService {
         },
       });
       const repaidPeriods = paidSchedules.length;
+
+      // 查询所有还款计划，汇总 paid_capital 和 paid_interest
+      const allSchedules = await tx.repaymentSchedule.findMany({
+        where: {
+          loan_id: loanId,
+        },
+        select: {
+          paid_capital: true,
+          paid_interest: true,
+          fines: true,
+        },
+      });
+
+      // 汇总所有还款计划的 paid_capital 和 paid_interest
+      const totalPaidCapital = allSchedules.reduce(
+        (sum, schedule) => sum + Number(schedule.paid_capital || 0),
+        0,
+      );
+      const totalPaidInterest = allSchedules.reduce(
+        (sum, schedule) => sum + Number(schedule.paid_interest || 0),
+        0,
+      );
+      const totalFines = allSchedules.reduce(
+        (sum, schedule) => sum + Number(schedule.fines || 0),
+        0,
+      );
+
       const loan = await tx.loanAccount.findUnique({
         where: { id: loanId },
         select: {
           user_id: true,
-          receiving_amount: true,
-          paid_capital: true,
-          paid_interest: true,
-          total_fines: true,
+          early_settlement_capital: true,
           total_periods: true,
         },
       });
+
+      const earlySettlementCapital = Number(
+        loan?.early_settlement_capital || 0,
+      );
+
+      // 按照新规则重新计算
+      // paid_capital = 所有还款计划的 paid_capital 总和 + early_settlement_capital
+      const calculatedPaidCapital = totalPaidCapital + earlySettlementCapital;
+      // paid_interest = 所有还款计划的 paid_interest 总和
+      const calculatedPaidInterest = totalPaidInterest;
+      // receiving_amount = paid_capital + paid_interest + totalFines
+      const calculatedReceivingAmount =
+        calculatedPaidCapital + calculatedPaidInterest + totalFines;
+
       // 更新 LoanAccount，同时保存上次编辑的输入值
       // 保存前端传入的原始值，供下次编辑时使用
       const inputFines = data.fines !== undefined ? Number(data.fines) : null;
       const updateLoanData: any = {
-        receiving_amount: Number(loan?.receiving_amount || 0) + currPaid,
-        paid_capital: Number(loan?.paid_capital || 0) + inputCapital,
-        paid_interest: Number(loan?.paid_interest || 0) + inputInterest,
+        receiving_amount: calculatedReceivingAmount,
+        paid_capital: calculatedPaidCapital,
+        paid_interest: calculatedPaidInterest,
         repaid_periods: repaidPeriods,
-        total_fines: Number(loan?.total_fines || 0) + finesValue,
+        total_fines: totalFines,
         // 保存上次编辑的输入值（前端传入的原始值），供下次编辑时使用
         last_edit_pay_capital: inputCapital > 0 ? inputCapital : null,
         last_edit_pay_interest: inputInterest > 0 ? inputInterest : null,
@@ -191,10 +225,6 @@ export class RepaymentSchedulesService {
           inputFines !== null && inputFines > 0 ? inputFines : null,
       };
 
-      // 如果状态从 pending 变为 paid，更新 last_repayment_date
-      if (shouldUpdateLastRepaymentDate) {
-        updateLoanData.last_repayment_date = currentSchedule.due_start_date;
-      }
       if (repaidPeriods === loan?.total_periods) {
         updateLoanData.status = 'settled';
       }

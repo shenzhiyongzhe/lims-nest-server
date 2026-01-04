@@ -29,26 +29,6 @@ export class StatisticsController {
         );
       return ResponseHelper.success(statistics, '统计数据获取成功');
     }
-
-    // 管理员可以使用日期范围
-    const { range = 'last_7_days', startDate, endDate } = query;
-
-    let parsedStartDate: Date | undefined;
-    let parsedEndDate: Date | undefined;
-
-    if (startDate) {
-      parsedStartDate = new Date(startDate);
-    }
-    if (endDate) {
-      parsedEndDate = new Date(endDate);
-    }
-
-    const statistics = await this.statisticsService.getStatisticsWithDateRange(
-      range,
-      parsedStartDate,
-      parsedEndDate,
-    );
-    return ResponseHelper.success(statistics, '统计数据获取成功');
   }
 
   @Get('admin')
@@ -59,38 +39,6 @@ export class StatisticsController {
     // 如果数据不存在，会自动创建默认统计记录
     const statistics = await this.statisticsService.getAdminStatistics();
     return ResponseHelper.success(statistics, '管理员统计数据获取成功');
-  }
-
-  @Get('admin/today')
-  @UseGuards(RolesGuard)
-  @Roles(ManagementRoles.管理员, ManagementRoles.风控人, ManagementRoles.负责人)
-  async getTodayAdminStatistics() {
-    const statistics = await this.statisticsService.getTodayAdminStatistics();
-    return ResponseHelper.success(statistics, '今日管理员统计数据获取成功');
-  }
-
-  @Get('admin/yesterday')
-  @UseGuards(RolesGuard)
-  @Roles(ManagementRoles.管理员, ManagementRoles.风控人, ManagementRoles.负责人)
-  async getYesterdayAdminStatistics() {
-    const statistics =
-      await this.statisticsService.getYesterdayAdminStatistics();
-    return ResponseHelper.success(statistics, '昨日管理员统计数据获取成功');
-  }
-
-  @Get('collector-report')
-  async getCollectorReport(@CurrentUser() user: { id: number; role: string }) {
-    // 根据用户角色确定查询类型
-    const roleType = user.role === '风控人' ? 'risk_controller' : 'collector';
-    const report = await this.statisticsService.getCollectorReport(
-      user.id,
-      roleType,
-    );
-    const message =
-      roleType === 'risk_controller'
-        ? '风控人报表获取成功'
-        : '收款人报表获取成功';
-    return ResponseHelper.success(report, message);
   }
 
   @Post('calculate')

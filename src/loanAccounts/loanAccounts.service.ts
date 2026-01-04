@@ -17,6 +17,7 @@ import {
   ExcelExportService,
 } from '../common/excel-export.service';
 import { LoanPredictionService } from '../loan-prediction/loan-prediction.service';
+import { AssetManagementService } from '../asset-management/asset-management.service';
 
 @Injectable()
 export class LoanAccountsService {
@@ -24,6 +25,7 @@ export class LoanAccountsService {
     private readonly prisma: PrismaService,
     private readonly excelExportService: ExcelExportService,
     private readonly loanPredictionService: LoanPredictionService,
+    private readonly assetManagementService: AssetManagementService,
   ) {}
 
   /**
@@ -395,6 +397,7 @@ export class LoanAccountsService {
           repaid_periods: 0,
           created_by: createdBy,
           note: data.remark || '',
+          ownership: data.ownership || null,
         },
       });
 
@@ -491,6 +494,20 @@ export class LoanAccountsService {
     } catch (error) {
       // 预测更新失败不影响主流程，只记录错误
       console.error('更新预测数据失败:', error);
+    }
+
+    // 更新 collector 和 risk_controller 资产数据
+    try {
+      await this.assetManagementService.updateCollectorAssetFromLoanAccount(
+        data.collector_id,
+        loan,
+      );
+      await this.assetManagementService.updateRiskControllerAssetFromLoanAccount(
+        data.risk_controller_id,
+        loan,
+      );
+    } catch (error) {
+      console.error('更新资产数据失败:', error);
     }
 
     return loan;
@@ -1007,6 +1024,89 @@ export class LoanAccountsService {
       paginatedLoans = sortedLoans.slice(startIndex, endIndex);
     }
 
+    // 获取当天和明天的日期（用于查询还款计划）
+    // 使用 UTC 时间避免时区问题
+    const now = new Date();
+    const today = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+    );
+    const tomorrow = new Date(today);
+    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+    const dayAfterTomorrow = new Date(tomorrow);
+    dayAfterTomorrow.setUTCDate(dayAfterTomorrow.getUTCDate() + 1);
+
+    // 批量查询当天和明天的还款计划
+    const loanIds = paginatedLoans.map((loan) => loan.id);
+    const todayTomorrowSchedules = await this.prisma.repaymentSchedule.findMany(
+      {
+        where: {
+          loan_id: { in: loanIds },
+          due_start_date: {
+            gte: today,
+            lt: dayAfterTomorrow,
+          },
+        },
+        select: {
+          loan_id: true,
+          due_start_date: true,
+          status: true,
+        },
+      },
+    );
+
+    // 按 loan_id 分组，判断当天和明天是否有已还清的计划
+    const scheduleMap = new Map<
+      string,
+      { todayPaid: boolean; tomorrowPaid: boolean }
+    >();
+
+    loanIds.forEach((loanId) => {
+      scheduleMap.set(loanId, { todayPaid: false, tomorrowPaid: false });
+    });
+
+    todayTomorrowSchedules.forEach((schedule) => {
+      // 将日期转换为 UTC 日期进行比较
+      const scheduleDate = new Date(schedule.due_start_date);
+      const scheduleUTCDate = new Date(
+        Date.UTC(
+          scheduleDate.getUTCFullYear(),
+          scheduleDate.getUTCMonth(),
+          scheduleDate.getUTCDate(),
+        ),
+      );
+
+      const isToday = scheduleUTCDate.getTime() === today.getTime();
+      const isTomorrow = scheduleUTCDate.getTime() === tomorrow.getTime();
+      const isPaid = schedule.status === 'paid';
+
+      const current = scheduleMap.get(schedule.loan_id) || {
+        todayPaid: false,
+        tomorrowPaid: false,
+      };
+
+      if (isToday && isPaid) {
+        current.todayPaid = true;
+      }
+      if (isTomorrow && isPaid) {
+        current.tomorrowPaid = true;
+      }
+
+      scheduleMap.set(schedule.loan_id, current);
+    });
+
+    // 为每个 loan 添加 today_paid 和 tomorrow_paid 字段
+    const processedLoans = paginatedLoans.map((loan) => {
+      const scheduleInfo = scheduleMap.get(loan.id) || {
+        todayPaid: false,
+        tomorrowPaid: false,
+      };
+      return {
+        ...loan,
+        today_paid: scheduleInfo.todayPaid,
+        tomorrow_paid: scheduleInfo.tomorrowPaid,
+      };
+    });
+
     return {
       statistics: {
         inStock,
@@ -1014,7 +1114,7 @@ export class LoanAccountsService {
         fines,
         remainingDebt,
       },
-      data: paginatedLoans,
+      data: processedLoans,
       total,
       relatedAdmins,
     };
@@ -1412,11 +1512,6 @@ export class LoanAccountsService {
           (sum, s) => sum + this.toNumber(s.paid_capital),
           0,
         );
-        const prevPaidInterest = schedules.reduce(
-          (sum, s) => sum + this.toNumber(s.paid_interest),
-          0,
-        );
-
         // 结清使用的本金和利息（如果前端传入则优先使用）
         const manualCapital = options?.settlementCapital ?? 0;
         const hasManualSettlement = manualCapital > 0;
@@ -1432,7 +1527,7 @@ export class LoanAccountsService {
         }
 
         // 结清/拉黑后的应收总额：
-        // = 已还本金 + 已还利息（截至结清前）+ 提前结清的本金 + 提前结清的利息
+        // = 已还本金 + 已还利息（截至结清前）+ 提前结清的本金
         receivingAmount = prevTotalReceiving + manualCapital;
 
         // 若有结清/拉黑金额，创建或更新一条提前结清的还款记录 + 完成订单

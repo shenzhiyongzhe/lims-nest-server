@@ -183,7 +183,6 @@ export class RepaymentSchedulesController {
     if (data.loan_id !== undefined) {
       updateData.loan_id = data.loan_id;
     }
-
     // 执行更新操作
     const updatedSchedule = await this.repaymentSchedulesService.update(
       updateData,

@@ -55,6 +55,7 @@ export class LoanAccountsController {
     @Query('endDate') endDate?: string,
     @Query('queryStatus') queryStatus?: string,
     @Query('dateField') dateField?: string,
+    @Query('keyword') keyword?: string,
   ): Promise<ApiResponseDto> {
     let statusArray: LoanAccountStatus[] = [];
     if (status) {
@@ -83,6 +84,7 @@ export class LoanAccountsController {
         | 'status_changed_at'
         | 'due_date_range'
         | undefined,
+      keyword,
     );
     return ResponseHelper.success(result, '获取贷款记录成功');
   }
@@ -115,6 +117,23 @@ export class LoanAccountsController {
       )}"; filename*=UTF-8''${encodeURIComponent(fileName)}`,
     );
     res.send(buffer);
+  }
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(ManagementRoles.管理员, ManagementRoles.负责人, ManagementRoles.风控人)
+  @Get('related-admins')
+  async getRelatedAdmins(
+    @CurrentUser() user: { id: number; role: string },
+  ): Promise<ApiResponseDto> {
+    try {
+      const admins = await this.loanAccountsService.getRelatedAdmins(
+        user.id,
+        user.role,
+      );
+      return ResponseHelper.success(admins, '获取归属人列表成功');
+    } catch (error: any) {
+      console.error('获取归属人列表错误:', error);
+      return ResponseHelper.error(`获取归属人列表失败: ${error.message}`, 500);
+    }
   }
 
   @Get(':id')
@@ -153,7 +172,7 @@ export class LoanAccountsController {
   }
 
   @UseGuards(AuthGuard, RolesGuard)
-  @Roles(ManagementRoles.管理员, ManagementRoles.负责人)
+  @Roles(ManagementRoles.管理员, ManagementRoles.负责人, ManagementRoles.风控人)
   @Put(':id')
   async update(
     @Param('id') id: string,
@@ -169,7 +188,7 @@ export class LoanAccountsController {
   }
 
   @UseGuards(AuthGuard, RolesGuard)
-  @Roles(ManagementRoles.管理员, ManagementRoles.负责人)
+  @Roles(ManagementRoles.管理员, ManagementRoles.负责人, ManagementRoles.风控人)
   @Put(':id/status')
   async updateStatus(
     @Param('id') id: string,
@@ -179,6 +198,7 @@ export class LoanAccountsController {
       settlement_capital?: number;
       settlement_date?: string;
     },
+    @CurrentUser() user: { id: number; role: string },
   ): Promise<ApiResponseDto> {
     try {
       if (!body.status) {
@@ -192,6 +212,7 @@ export class LoanAccountsController {
           settlementCapital: body.settlement_capital,
           settlementDate: body.settlement_date,
         },
+        user.id,
       );
       return ResponseHelper.success(updated, '更新贷款状态成功');
     } catch (error: any) {
@@ -218,24 +239,6 @@ export class LoanAccountsController {
         return ResponseHelper.error(error.message, 409); // 409 Conflict
       }
       return ResponseHelper.error(`删除贷款记录失败: ${error.message}`, 500);
-    }
-  }
-
-  @UseGuards(AuthGuard, RolesGuard)
-  @Roles(ManagementRoles.管理员, ManagementRoles.负责人, ManagementRoles.风控人)
-  @Get('related-admins')
-  async getRelatedAdmins(
-    @CurrentUser() user: { id: number; role: string },
-  ): Promise<ApiResponseDto> {
-    try {
-      const admins = await this.loanAccountsService.getRelatedAdmins(
-        user.id,
-        user.role,
-      );
-      return ResponseHelper.success(admins, '获取归属人列表成功');
-    } catch (error: any) {
-      console.error('获取归属人列表错误:', error);
-      return ResponseHelper.error(`获取归属人列表失败: ${error.message}`, 500);
     }
   }
 }

@@ -253,6 +253,85 @@ export class RepaymentSchedulesService {
     });
   }
 
+  async create(loanId: string): Promise<RepaymentSchedule> {
+    return await this.prisma.$transaction(async (tx) => {
+      // 1. 查询该贷款账户的所有还款计划，按 period 降序排列获取最后一期
+      const allSchedules = await tx.repaymentSchedule.findMany({
+        where: {
+          loan_id: loanId,
+        },
+        orderBy: {
+          period: 'desc',
+        },
+        take: 1,
+      });
+
+      if (allSchedules.length === 0) {
+        throw new NotFoundException('该贷款账户没有还款计划，无法添加新期数');
+      }
+
+      const lastSchedule = allSchedules[0];
+
+      // 2. 获取贷款账户信息，用于更新 total_periods
+      const loanAccount = await tx.loanAccount.findUnique({
+        where: { id: loanId },
+        select: {
+          total_periods: true,
+        },
+      });
+
+      if (!loanAccount) {
+        throw new NotFoundException('贷款账户不存在');
+      }
+
+      // 3. 计算新期数的 period 和 due_start_date
+      const newPeriod = lastSchedule.period + 1;
+      const lastDate = new Date(lastSchedule.due_start_date);
+      const newDate = new Date(
+        Date.UTC(
+          lastDate.getUTCFullYear(),
+          lastDate.getUTCMonth(),
+          lastDate.getUTCDate() + 1,
+        ),
+      );
+
+      // 4. 从最后一期复制字段
+      const toNumber = (value?: any) =>
+        value !== null && value !== undefined ? Number(value) : 0;
+
+      const capital = toNumber(lastSchedule.capital);
+      const interest = toNumber(lastSchedule.interest);
+      const dueAmount = capital + interest;
+
+      // 5. 创建新还款计划
+      const newSchedule = await tx.repaymentSchedule.create({
+        data: {
+          loan_id: loanId,
+          period: newPeriod,
+          due_start_date: newDate,
+          due_amount: dueAmount,
+          capital: capital,
+          interest: interest,
+          paid_capital: 0,
+          paid_interest: 0,
+          fines: 0,
+          status: 'pending' as RepaymentScheduleStatus,
+          paid_amount: 0,
+        },
+      });
+
+      // 6. 更新 LoanAccount 的 total_periods
+      await tx.loanAccount.update({
+        where: { id: loanId },
+        data: {
+          total_periods: loanAccount.total_periods + 1,
+        },
+      });
+
+      return newSchedule;
+    });
+  }
+
   async delete(data: RepaymentSchedule): Promise<RepaymentSchedule> {
     return this.prisma.repaymentSchedule.delete({
       where: { id: data.id },

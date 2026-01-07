@@ -16,16 +16,51 @@ export class StatisticsController {
 
   @Get()
   async getStatistics(
-    @Query() query: GetStatisticsDto,
+    @Query()
+    query: GetStatisticsDto & {
+      riskControllerId?: string;
+      collectorId?: string;
+      roleType?: string;
+      adminId?: string;
+    },
     @CurrentUser() user: { id: number; role: string },
   ) {
+    // 管理员查询collector/risk_controller详细统计数据
+    if (user.role === '管理员') {
+      // 解析参数
+      const roleType =
+        (query.roleType as 'collector' | 'risk_controller') || 'collector';
+      const adminId = query.adminId ? parseInt(query.adminId, 10) : undefined;
+
+      const statistics =
+        await this.statisticsService.getCollectorDetailedStatisticsForAdmin(
+          user.id,
+          roleType,
+          undefined, // targetDate
+          adminId,
+        );
+      return ResponseHelper.success(statistics, '统计数据获取成功');
+    }
+
     // 检查用户角色：collector和risk_controller获取详细统计数据
     if (user.role === '负责人' || user.role === '风控人') {
       const roleType = user.role === '负责人' ? 'collector' : 'risk_controller';
+
+      // 解析归属筛选参数
+      const riskControllerId = query.riskControllerId
+        ? parseInt(query.riskControllerId, 10)
+        : undefined;
+      const collectorId = query.collectorId
+        ? parseInt(query.collectorId, 10)
+        : undefined;
+
       const statistics =
-        await this.statisticsService.getCollectorDetailedStatistics(
+        await this.statisticsService.getCollectorDetailedStatisticsForCollector(
           user.id,
           roleType,
+          undefined, // targetDate
+          riskControllerId,
+          collectorId,
         );
       return ResponseHelper.success(statistics, '统计数据获取成功');
     }

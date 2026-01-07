@@ -136,6 +136,8 @@ export class RepaymentRecordsService {
       startDate,
       endDate,
       collector,
+      riskControllerId,
+      collectorId,
     } = query;
     const skip = (page - 1) * pageSize;
 
@@ -150,14 +152,26 @@ export class RepaymentRecordsService {
     }
 
     let where: any = {};
-
     // 根据管理员角色过滤数据
     if (admin.role === '风控人') {
       // 风控人只能看到自己负责的贷款的还款记录
-      const loanAccounts = await this.prisma.loanAccount.findMany({
+      let loanAccounts = await this.prisma.loanAccount.findMany({
         where: { risk_controller_id: admin.id },
         select: { id: true },
       });
+
+      // 如果提供了 collectorId，只显示与该负责人共同关联的贷款
+      if (collectorId) {
+        const collectorLoanAccounts = await this.prisma.loanAccount.findMany({
+          where: { collector_id: collectorId },
+          select: { id: true },
+        });
+        const collectorLoanIds = collectorLoanAccounts.map((la) => la.id);
+        loanAccounts = loanAccounts.filter((la) =>
+          collectorLoanIds.includes(la.id),
+        );
+      }
+
       const loanIds = loanAccounts.map((la) => la.id);
 
       if (loanIds.length === 0) {
@@ -177,10 +191,26 @@ export class RepaymentRecordsService {
       where.loan_id = { in: loanIds };
     } else if (admin.role === '负责人') {
       // 负责人只能查看自己负责的贷款的还款记录
-      const loanAccounts = await this.prisma.loanAccount.findMany({
+      let loanAccounts = await this.prisma.loanAccount.findMany({
         where: { collector_id: admin.id },
         select: { id: true },
       });
+
+      // 如果提供了 riskControllerId，只显示与该风控人共同关联的贷款
+      if (riskControllerId) {
+        const riskControllerLoanAccounts =
+          await this.prisma.loanAccount.findMany({
+            where: { risk_controller_id: riskControllerId },
+            select: { id: true },
+          });
+        const riskControllerLoanIds = riskControllerLoanAccounts.map(
+          (la) => la.id,
+        );
+        loanAccounts = loanAccounts.filter((la) =>
+          riskControllerLoanIds.includes(la.id),
+        );
+      }
+
       const loanIds = loanAccounts.map((la) => la.id);
 
       if (loanIds.length === 0) {

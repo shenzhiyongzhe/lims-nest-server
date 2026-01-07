@@ -37,4 +37,14 @@ export class PaginationQueryDto {
   @IsOptional()
   @IsString()
   collector?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  riskControllerId?: number; // 负责人筛选风控人时使用
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  collectorId?: number; // 风控人筛选负责人时使用
 }

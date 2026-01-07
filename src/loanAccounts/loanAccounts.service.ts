@@ -18,7 +18,6 @@ import {
 } from '../common/excel-export.service';
 import { LoanPredictionService } from '../loan-prediction/loan-prediction.service';
 import { AssetManagementService } from '../asset-management/asset-management.service';
-
 @Injectable()
 export class LoanAccountsService {
   constructor(
@@ -197,71 +196,6 @@ export class LoanAccountsService {
     }
 
     return [];
-  }
-
-  /**
-   * 日期计算工具函数
-   */
-  private getTodayRange(): { start: Date; end: Date } {
-    const now = new Date();
-    const start = new Date(
-      Date.UTC(
-        now.getUTCFullYear(),
-        now.getUTCMonth(),
-        now.getUTCDate(),
-        0,
-        0,
-        0,
-        0,
-      ),
-    );
-    const end = new Date(
-      Date.UTC(
-        now.getUTCFullYear(),
-        now.getUTCMonth(),
-        now.getUTCDate(),
-        23,
-        59,
-        59,
-        999,
-      ),
-    );
-    return { start, end };
-  }
-
-  private getYesterdayRange(): { start: Date; end: Date } {
-    const today = this.getTodayRange();
-    const start = new Date(today.start);
-    start.setUTCDate(start.getUTCDate() - 1);
-    const end = new Date(today.start);
-    end.setUTCMilliseconds(end.getUTCMilliseconds() - 1);
-    return { start, end };
-  }
-
-  private getThisMonthRange(): { start: Date; end: Date } {
-    const now = new Date();
-    const start = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0),
-    );
-    const nextMonthStart = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1, 0, 0, 0, 0),
-    );
-    const end = new Date(nextMonthStart);
-    end.setUTCMilliseconds(end.getUTCMilliseconds() - 1);
-    return { start, end };
-  }
-
-  private getLastMonthRange(): { start: Date; end: Date } {
-    const now = new Date();
-    const start = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1, 0, 0, 0, 0),
-    );
-    const thisMonthStart = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0),
-    );
-    const end = new Date(thisMonthStart);
-    end.setUTCMilliseconds(end.getUTCMilliseconds() - 1);
-    return { start, end };
   }
 
   /**
@@ -646,6 +580,7 @@ export class LoanAccountsService {
       | 'paid_at'
       | 'status_changed_at'
       | 'due_date_range',
+    keyword?: string,
   ): Promise<{
     statistics: {
       inStock: number;
@@ -880,6 +815,15 @@ export class LoanAccountsService {
           };
         }
       }
+    }
+
+    // 客户名字模糊搜索
+    if (keyword && keyword.trim()) {
+      where.user = {
+        username: {
+          contains: keyword.trim(),
+        },
+      };
     }
 
     // 调试：打印查询条件
@@ -1408,6 +1352,7 @@ export class LoanAccountsService {
       settlementCapital?: number;
       settlementDate?: string;
     },
+    userId?: number | null,
   ): Promise<LoanAccount> {
     // 检查贷款记录是否存在
     const loan = await this.prisma.loanAccount.findUnique({
@@ -1481,8 +1426,7 @@ export class LoanAccountsService {
 
         // 以后的计划：状态改为 terminated
         const schedulesToTerminate = schedules.filter((s) => {
-          if (!s.due_start_date) return false;
-          if (s.status !== 'pending') return false;
+          if (s.status === 'active' || s.status === 'paid') return false;
           return s.due_start_date >= settlementDateStart;
         });
 
@@ -1597,7 +1541,7 @@ export class LoanAccountsService {
           } else {
             // 如果记录不存在，创建新订单和还款记录
             // 获取actual_collector_id：如果有payee，使用payee.admin_id
-            let actualCollectorId: number | null = null;
+            let actualCollectorId: number | null | undefined;
             if (payee?.id) {
               const payeeRecord = await tx.payee.findUnique({
                 where: { id: payee.id },
@@ -1606,8 +1550,9 @@ export class LoanAccountsService {
               if (payeeRecord) {
                 actualCollectorId = payeeRecord.admin_id;
               }
+            } else {
+              actualCollectorId = userId;
             }
-
             const order = await tx.order.create({
               data: {
                 customer_id: la!.user_id,
@@ -1633,7 +1578,6 @@ export class LoanAccountsService {
                 actual_collector_id: actualCollectorId,
                 remark: '来源：提前结清',
                 order_id: order.id,
-                // 记录本次结清的本金和利息，便于后续统计
                 paid_capital: hasManualSettlement ? manualCapital : null,
                 paid_fines: null,
               },

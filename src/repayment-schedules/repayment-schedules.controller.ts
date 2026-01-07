@@ -71,6 +71,39 @@ export class RepaymentSchedulesController {
     const data = this.repaymentSchedulesService.toResponse(schedule);
     return ResponseHelper.success(data, '获取还款计划成功');
   }
+  @Post()
+  @Roles(ManagementRoles.管理员, ManagementRoles.负责人, ManagementRoles.风控人)
+  async create(
+    @Body() data: { loan_id: string },
+    @CurrentUser() user: { id: number; role: string },
+  ): Promise<ApiResponseDto> {
+    if (!data.loan_id) {
+      throw new NotFoundException('缺少 loan_id 参数');
+    }
+
+    const newSchedule = await this.repaymentSchedulesService.create(
+      data.loan_id,
+    );
+
+    const responseData = {
+      id: newSchedule.id,
+      loan_id: newSchedule.loan_id,
+      period: newSchedule.period,
+      due_start_date: newSchedule.due_start_date,
+      due_amount: newSchedule.due_amount,
+      capital: newSchedule.capital,
+      interest: newSchedule.interest,
+      paid_capital: newSchedule.paid_capital,
+      paid_interest: newSchedule.paid_interest,
+      fines: newSchedule.fines,
+      status: newSchedule.status,
+      paid_amount: newSchedule.paid_amount,
+      paid_at: newSchedule.paid_at,
+    };
+
+    return ResponseHelper.success(responseData, '创建还款计划成功');
+  }
+
   @Put()
   async update(
     @Body() data: any,

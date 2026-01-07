@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UpdateCollectorAssetDto } from './dto/update-collector-asset.dto';
 import { UpdateRiskControllerAssetDto } from './dto/update-risk-controller-asset.dto';
@@ -6,114 +6,269 @@ import { OperationLogsService } from '../operation-logs/operation-logs.service';
 import { LoanAccount } from '@prisma/client';
 
 @Injectable()
-export class AssetManagementService {
+export class AssetManagementService implements OnModuleInit {
+  private readonly logger = new Logger(AssetManagementService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly operationLogsService: OperationLogsService,
   ) {}
 
-  // 获取collector资产数据，直接返回数据库数据
+  // 获取collector资产数据，实时计算total_handling_fee和total_fines
   async findCollectorAsset(adminId: number) {
+    // 获取admin信息
+    const admin = await this.prisma.admin.findUnique({
+      where: { id: adminId },
+      select: { id: true, username: true },
+    });
+
+    // 获取数据库中的reduced字段
     const asset = await this.prisma.collectorAssetManagement.findUnique({
       where: { admin_id: adminId },
-      include: { admin: { select: { id: true, username: true } } },
     });
 
-    if (!asset) {
-      // 如果没有记录，返回所有字段为 0 的数据（不创建记录）
-      return {
-        id: 0,
-        admin_id: adminId,
-        admin: null,
-        total_handling_fee: 0,
-        total_fines: 0,
-        reduced_handling_fee: 0,
-        reduced_fines: 0,
-        created_at: null,
-        updated_at: null,
-      };
-    }
+    // 实时计算total_handling_fee和total_fines
+    const loanAccountIds = await this.getCollectorLoanAccountIds(adminId);
+    const { total_handling_fee, total_fines } =
+      await this.calculateTotalAmounts(loanAccountIds);
+
+    // 获取reduced字段（如果存在）
+    const reduced_handling_fee = asset
+      ? Number((asset as any).reduced_handling_fee || 0)
+      : 0;
+    const reduced_fines = asset ? Number((asset as any).reduced_fines || 0) : 0;
 
     return {
-      id: asset.id,
-      admin_id: asset.admin_id,
-      admin: asset.admin,
-      total_handling_fee: Number(asset.total_handling_fee),
-      total_fines: Number(asset.total_fines),
-      reduced_handling_fee: Number((asset as any).reduced_handling_fee || 0),
-      reduced_fines: Number((asset as any).reduced_fines || 0),
-      created_at: asset.created_at,
-      updated_at: asset.updated_at,
+      id: asset?.id || 0,
+      admin_id: adminId,
+      admin: admin,
+      total_handling_fee,
+      total_fines,
+      reduced_handling_fee,
+      reduced_fines,
+      created_at: asset?.created_at || null,
+      updated_at: asset?.updated_at || null,
     };
   }
 
-  // 获取risk_controller资产数据，直接返回数据库数据
+  // 获取risk_controller资产数据，实时计算total_amount
   async findRiskControllerAsset(adminId: number) {
+    // 获取admin信息
+    const admin = await this.prisma.admin.findUnique({
+      where: { id: adminId },
+      select: { id: true, username: true },
+    });
+
+    // 获取数据库中的reduced字段
     const asset = await this.prisma.riskControllerAssetManagement.findUnique({
       where: { admin_id: adminId },
-      include: { admin: { select: { id: true, username: true } } },
     });
 
-    if (!asset) {
-      // 如果没有记录，返回所有字段为 0 的数据（不创建记录）
-      return {
-        id: 0,
+    // 实时计算total_amount
+    const roles = await this.prisma.loanAccountRole.findMany({
+      where: {
         admin_id: adminId,
-        admin: null,
-        total_amount: 0,
-        reduced_amount: 0,
-        created_at: null,
-        updated_at: null,
-      };
+        role_type: 'risk_controller',
+      },
+      select: {
+        loan_account_id: true,
+      },
+    });
+
+    const loanAccountIds = roles.map((r) => r.loan_account_id);
+    let total_amount = 0;
+
+    if (loanAccountIds.length > 0) {
+      const allLoanAccounts = await this.prisma.loanAccount.findMany({
+        where: {
+          id: { in: loanAccountIds },
+        },
+        select: {
+          handling_fee: true,
+          receiving_amount: true,
+          company_cost: true,
+        },
+      });
+
+      // 计算总和：handling_fee + receiving_amount - company_cost
+      total_amount = allLoanAccounts.reduce(
+        (sum, acc) =>
+          sum +
+          Number(acc.handling_fee || 0) +
+          Number(acc.receiving_amount || 0) -
+          Number(acc.company_cost || 0),
+        0,
+      );
     }
 
+    // 获取reduced字段（如果存在）
+    const reduced_amount = asset ? Number(asset.reduced_amount || 0) : 0;
+
     return {
-      id: asset.id,
-      admin_id: asset.admin_id,
-      admin: asset.admin,
-      total_amount: Number(asset.total_amount),
-      reduced_amount: Number(asset.reduced_amount),
-      created_at: asset.created_at,
-      updated_at: asset.updated_at,
+      id: asset?.id || 0,
+      admin_id: adminId,
+      admin: admin,
+      total_amount,
+      reduced_amount,
+      created_at: asset?.created_at || null,
+      updated_at: asset?.updated_at || null,
     };
   }
 
-  // 获取所有collector资产（管理员用），直接返回数据库数据
+  // 获取所有collector资产（管理员用），实时计算total_handling_fee和total_fines
   async findAllCollectorAssets() {
-    const assets = await this.prisma.collectorAssetManagement.findMany({
-      include: { admin: { select: { id: true, username: true } } },
-      orderBy: { admin_id: 'asc' },
+    // 获取所有collector的admin_id
+    const collectorRoles = await this.prisma.loanAccountRole.findMany({
+      where: {
+        role_type: 'collector',
+      },
+      select: {
+        admin_id: true,
+      },
+      distinct: ['admin_id'],
     });
 
-    return assets.map((asset) => ({
-      id: asset.id,
-      admin_id: asset.admin_id,
-      admin: asset.admin,
-      total_handling_fee: Number(asset.total_handling_fee),
-      total_fines: Number(asset.total_fines),
-      reduced_handling_fee: Number((asset as any).reduced_handling_fee || 0),
-      reduced_fines: Number((asset as any).reduced_fines || 0),
-      created_at: asset.created_at,
-      updated_at: asset.updated_at,
-    }));
+    const collectorAdminIds = collectorRoles.map((r) => r.admin_id);
+
+    if (collectorAdminIds.length === 0) {
+      return [];
+    }
+
+    // 获取所有admin信息
+    const admins = await this.prisma.admin.findMany({
+      where: {
+        id: { in: collectorAdminIds },
+      },
+      select: { id: true, username: true },
+    });
+
+    // 获取所有资产记录（用于reduced字段）
+    const assets = await this.prisma.collectorAssetManagement.findMany({
+      where: {
+        admin_id: { in: collectorAdminIds },
+      },
+    });
+
+    const assetMap = new Map(assets.map((asset) => [asset.admin_id, asset]));
+
+    // 为每个collector实时计算total_handling_fee和total_fines
+    const result = await Promise.all(
+      admins.map(async (admin) => {
+        const asset = assetMap.get(admin.id);
+        const loanAccountIds = await this.getCollectorLoanAccountIds(admin.id);
+        const { total_handling_fee, total_fines } =
+          await this.calculateTotalAmounts(loanAccountIds);
+
+        return {
+          id: asset?.id || 0,
+          admin_id: admin.id,
+          admin: admin,
+          total_handling_fee,
+          total_fines,
+          reduced_handling_fee: asset
+            ? Number((asset as any).reduced_handling_fee || 0)
+            : 0,
+          reduced_fines: asset ? Number((asset as any).reduced_fines || 0) : 0,
+          created_at: asset?.created_at || null,
+          updated_at: asset?.updated_at || null,
+        };
+      }),
+    );
+
+    // 按admin_id排序
+    return result.sort((a, b) => a.admin_id - b.admin_id);
   }
 
-  // 获取所有risk_controller资产（管理员用）
+  // 获取所有risk_controller资产（管理员用），实时计算total_amount
   async findAllRiskControllerAssets() {
-    const assets = await this.prisma.riskControllerAssetManagement.findMany({
-      include: { admin: { select: { id: true, username: true } } },
-      orderBy: { admin_id: 'asc' },
+    // 获取所有risk_controller的admin_id
+    const riskControllerRoles = await this.prisma.loanAccountRole.findMany({
+      where: {
+        role_type: 'risk_controller',
+      },
+      select: {
+        admin_id: true,
+      },
+      distinct: ['admin_id'],
     });
 
-    return assets.map((asset) => ({
-      id: asset.id,
-      admin_id: asset.admin_id,
-      admin: asset.admin,
-      total_amount: Number(asset.total_amount),
-      reduced_amount: Number(asset.reduced_amount),
-      created_at: asset.created_at,
-      updated_at: asset.updated_at,
-    }));
+    const riskControllerAdminIds = riskControllerRoles.map((r) => r.admin_id);
+
+    if (riskControllerAdminIds.length === 0) {
+      return [];
+    }
+
+    // 获取所有admin信息
+    const admins = await this.prisma.admin.findMany({
+      where: {
+        id: { in: riskControllerAdminIds },
+      },
+      select: { id: true, username: true },
+    });
+
+    // 获取所有资产记录（用于reduced字段）
+    const assets = await this.prisma.riskControllerAssetManagement.findMany({
+      where: {
+        admin_id: { in: riskControllerAdminIds },
+      },
+    });
+
+    const assetMap = new Map(assets.map((asset) => [asset.admin_id, asset]));
+
+    // 为每个risk_controller实时计算total_amount
+    const result = await Promise.all(
+      admins.map(async (admin) => {
+        const asset = assetMap.get(admin.id);
+        const roles = await this.prisma.loanAccountRole.findMany({
+          where: {
+            admin_id: admin.id,
+            role_type: 'risk_controller',
+          },
+          select: {
+            loan_account_id: true,
+          },
+        });
+
+        const loanAccountIds = roles.map((r) => r.loan_account_id);
+        let total_amount = 0;
+
+        if (loanAccountIds.length > 0) {
+          const allLoanAccounts = await this.prisma.loanAccount.findMany({
+            where: {
+              id: { in: loanAccountIds },
+            },
+            select: {
+              handling_fee: true,
+              receiving_amount: true,
+              company_cost: true,
+            },
+          });
+
+          // 计算总和：handling_fee + receiving_amount - company_cost
+          total_amount = allLoanAccounts.reduce(
+            (sum, acc) =>
+              sum +
+              Number(acc.handling_fee || 0) +
+              Number(acc.receiving_amount || 0) -
+              Number(acc.company_cost || 0),
+            0,
+          );
+        }
+
+        return {
+          id: asset?.id || 0,
+          admin_id: admin.id,
+          admin: admin,
+          total_amount,
+          reduced_amount: asset ? Number(asset.reduced_amount || 0) : 0,
+          created_at: asset?.created_at || null,
+          updated_at: asset?.updated_at || null,
+        };
+      }),
+    );
+
+    // 按admin_id排序
+    return result.sort((a, b) => a.admin_id - b.admin_id);
   }
 
   // 更新collector资产（累加更新 reduced 字段）
@@ -559,5 +714,233 @@ export class AssetManagementService {
       console.error('更新 risk_controller 资产失败:', error);
       // 不抛出错误，资产更新失败不影响主流程
     }
+  }
+
+  // 项目启动时初始化资产信息
+  async onModuleInit() {
+    this.logger.log('开始初始化资产信息...');
+    try {
+      await this.initializeAssets();
+      this.logger.log('资产信息初始化完成');
+    } catch (error) {
+      this.logger.error('资产信息初始化失败:', error);
+      // 不抛出错误，初始化失败不影响应用启动
+    }
+  }
+
+  // 初始化所有缺失的资产记录
+  private async initializeAssets(): Promise<void> {
+    // 1. 查询所有有 collector 或 risk_controller 角色的 admin
+    const roles = await this.prisma.loanAccountRole.findMany({
+      where: {
+        role_type: { in: ['collector', 'risk_controller'] },
+      },
+      select: {
+        admin_id: true,
+        role_type: true,
+      },
+      distinct: ['admin_id', 'role_type'],
+    });
+
+    if (roles.length === 0) {
+      this.logger.log('未找到需要初始化的资产记录');
+      return;
+    }
+
+    // 2. 批量查询所有已存在的资产记录
+    const collectorAdminIds = roles
+      .filter((r) => r.role_type === 'collector')
+      .map((r) => r.admin_id);
+    const riskControllerAdminIds = roles
+      .filter((r) => r.role_type === 'risk_controller')
+      .map((r) => r.admin_id);
+
+    const existingCollectorAssets =
+      collectorAdminIds.length > 0
+        ? await this.prisma.collectorAssetManagement.findMany({
+            where: { admin_id: { in: collectorAdminIds } },
+            select: { admin_id: true },
+          })
+        : [];
+
+    const existingRiskControllerAssets =
+      riskControllerAdminIds.length > 0
+        ? await this.prisma.riskControllerAssetManagement.findMany({
+            where: { admin_id: { in: riskControllerAdminIds } },
+            select: { admin_id: true },
+          })
+        : [];
+
+    const existingCollectorIds = new Set(
+      existingCollectorAssets.map((a) => a.admin_id),
+    );
+    const existingRiskControllerIds = new Set(
+      existingRiskControllerAssets.map((a) => a.admin_id),
+    );
+
+    // 3. 找出需要初始化的 admin
+    const collectorsToInit = collectorAdminIds.filter(
+      (id) => !existingCollectorIds.has(id),
+    );
+    const riskControllersToInit = riskControllerAdminIds.filter(
+      (id) => !existingRiskControllerIds.has(id),
+    );
+
+    this.logger.log(
+      `需要初始化 ${collectorsToInit.length} 个 collector 资产，${riskControllersToInit.length} 个 risk_controller 资产`,
+    );
+
+    // 4. 初始化 collector 资产
+    for (const adminId of collectorsToInit) {
+      try {
+        await this.initializeCollectorAsset(adminId);
+      } catch (error) {
+        this.logger.error(
+          `初始化 collector 资产失败 (adminId: ${adminId}):`,
+          error,
+        );
+      }
+    }
+
+    // 5. 初始化 risk_controller 资产
+    for (const adminId of riskControllersToInit) {
+      try {
+        await this.initializeRiskControllerAsset(adminId);
+      } catch (error) {
+        this.logger.error(
+          `初始化 risk_controller 资产失败 (adminId: ${adminId}):`,
+          error,
+        );
+      }
+    }
+
+    this.logger.log(
+      `成功初始化 ${collectorsToInit.length} 个 collector 资产，${riskControllersToInit.length} 个 risk_controller 资产`,
+    );
+  }
+
+  // 初始化单个 collector 资产
+  private async initializeCollectorAsset(adminId: number): Promise<void> {
+    // 获取该 collector 关联的所有 loanAccount
+    const loanAccountIds = await this.getCollectorLoanAccountIds(adminId);
+
+    if (loanAccountIds.length === 0) {
+      // 如果没有关联的 loanAccount，创建一条空记录
+      await this.prisma.collectorAssetManagement.create({
+        data: {
+          admin_id: adminId,
+          total_handling_fee: 0,
+          total_fines: 0,
+          reduced_handling_fee: 0,
+          reduced_fines: 0,
+        } as any,
+      });
+      this.logger.log(
+        `创建 collector 资产记录 (adminId: ${adminId})，无关联 loanAccount`,
+      );
+      return;
+    }
+
+    // 查询所有关联的 loanAccount
+    const allLoanAccounts = await this.prisma.loanAccount.findMany({
+      where: {
+        id: { in: loanAccountIds },
+      },
+      select: {
+        handling_fee: true,
+        total_fines: true,
+      },
+    });
+
+    // 计算总和
+    const total_handling_fee = allLoanAccounts.reduce(
+      (sum, acc) => sum + Number(acc.handling_fee || 0),
+      0,
+    );
+    const total_fines = allLoanAccounts.reduce(
+      (sum, acc) => sum + Number(acc.total_fines || 0),
+      0,
+    );
+
+    // 创建资产记录
+    await this.prisma.collectorAssetManagement.create({
+      data: {
+        admin_id: adminId,
+        total_handling_fee: total_handling_fee,
+        total_fines: total_fines,
+        reduced_handling_fee: 0,
+        reduced_fines: 0,
+      } as any,
+    });
+
+    this.logger.log(
+      `创建 collector 资产记录 (adminId: ${adminId})，total_handling_fee: ${total_handling_fee}, total_fines: ${total_fines}`,
+    );
+  }
+
+  // 初始化单个 risk_controller 资产
+  private async initializeRiskControllerAsset(adminId: number): Promise<void> {
+    // 获取该 risk_controller 关联的所有 loanAccount
+    const roles = await this.prisma.loanAccountRole.findMany({
+      where: {
+        admin_id: adminId,
+        role_type: 'risk_controller',
+      },
+      select: {
+        loan_account_id: true,
+      },
+    });
+
+    const loanAccountIds = roles.map((r) => r.loan_account_id);
+
+    if (loanAccountIds.length === 0) {
+      // 如果没有关联的 loanAccount，创建一条空记录
+      await this.prisma.riskControllerAssetManagement.create({
+        data: {
+          admin_id: adminId,
+          total_amount: 0,
+          reduced_amount: 0,
+        },
+      });
+      this.logger.log(
+        `创建 risk_controller 资产记录 (adminId: ${adminId})，无关联 loanAccount`,
+      );
+      return;
+    }
+
+    // 查询所有关联的 loanAccount
+    const allLoanAccounts = await this.prisma.loanAccount.findMany({
+      where: {
+        id: { in: loanAccountIds },
+      },
+      select: {
+        handling_fee: true,
+        receiving_amount: true,
+        company_cost: true,
+      },
+    });
+
+    // 计算总和：handling_fee + receiving_amount - company_cost
+    const total_amount = allLoanAccounts.reduce(
+      (sum, acc) =>
+        sum +
+        Number(acc.handling_fee || 0) +
+        Number(acc.receiving_amount || 0) -
+        Number(acc.company_cost || 0),
+      0,
+    );
+
+    // 创建资产记录
+    await this.prisma.riskControllerAssetManagement.create({
+      data: {
+        admin_id: adminId,
+        total_amount: total_amount,
+        reduced_amount: 0,
+      },
+    });
+
+    this.logger.log(
+      `创建 risk_controller 资产记录 (adminId: ${adminId})，total_amount: ${total_amount}`,
+    );
   }
 }

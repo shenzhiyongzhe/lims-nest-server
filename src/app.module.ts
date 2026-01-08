@@ -22,6 +22,7 @@ import { PayeeRankingModule } from './payee-ranking/payee-ranking.module';
 import { AssetManagementModule } from './asset-management/asset-management.module';
 import { LoanPredictionModule } from './loan-prediction/loan-prediction.module';
 import { BackupModule } from './backup/backup.module';
+import { MobileTerminalModule } from './mobile-terminal/mobile-terminal.module';
 @Module({
   imports: [
     ScheduleModule.forRoot(),
@@ -47,6 +48,7 @@ import { BackupModule } from './backup/backup.module';
     AssetManagementModule,
     LoanPredictionModule,
     BackupModule,
+    MobileTerminalModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -17,7 +17,7 @@ import { ApiResponseDto } from 'src/common/dto/api-response.dto';
 
 @Controller('operation-logs')
 @UseGuards(AuthGuard, RolesGuard)
-@Roles(ManagementRoles.管理员) // Only admins can view operation logs
+@Roles(ManagementRoles.ADMIN) // Only admins can view operation logs
 export class OperationLogsController {
   constructor(private readonly operationLogsService: OperationLogsService) {}
 

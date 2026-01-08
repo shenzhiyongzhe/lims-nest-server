@@ -9,7 +9,7 @@ import { ApiResponseDto } from '../common/dto/api-response.dto';
 
 @Controller('payee-ranking')
 @UseGuards(AuthGuard, RolesGuard)
-@Roles(ManagementRoles.管理员, ManagementRoles.收款人)
+@Roles(ManagementRoles.ADMIN, ManagementRoles.PAYEE)
 export class PayeeRankingController {
   constructor(private readonly payeeRankingService: PayeeRankingService) {}
 

@@ -34,7 +34,7 @@ export class AssetManagementController {
     @CurrentUser() user: { id: number; role: string },
   ): Promise<ApiResponseDto> {
     // 检查权限：只能查看自己的数据，或者管理员可以查看所有
-    if (user.role !== '管理员' && user.id !== adminId) {
+    if (user.role !== 'ADMIN' && user.id !== adminId) {
       return ResponseHelper.error('无权访问', 403);
     }
 
@@ -49,7 +49,7 @@ export class AssetManagementController {
     @CurrentUser() user: { id: number; role: string },
   ): Promise<ApiResponseDto> {
     // 检查权限：只能查看自己的数据，或者管理员可以查看所有
-    if (user.role !== '管理员' && user.id !== adminId) {
+    if (user.role !== 'ADMIN' && user.id !== adminId) {
       return ResponseHelper.error('无权访问', 403);
     }
 
@@ -61,7 +61,7 @@ export class AssetManagementController {
   // 获取所有collector资产（管理员，需要RolesGuard）
   @Get('collector')
   @UseGuards(RolesGuard)
-  @Roles(ManagementRoles.管理员)
+  @Roles(ManagementRoles.ADMIN)
   async getAllCollectorAssets(): Promise<ApiResponseDto> {
     const assets = await this.assetManagementService.findAllCollectorAssets();
     return ResponseHelper.success(assets, '获取所有collector资产成功');
@@ -70,7 +70,7 @@ export class AssetManagementController {
   // 获取所有risk_controller资产（管理员，需要RolesGuard）
   @Get('risk-controller')
   @UseGuards(RolesGuard)
-  @Roles(ManagementRoles.管理员)
+  @Roles(ManagementRoles.ADMIN)
   async getAllRiskControllerAssets(): Promise<ApiResponseDto> {
     const assets =
       await this.assetManagementService.findAllRiskControllerAssets();
@@ -80,7 +80,7 @@ export class AssetManagementController {
   // 更新collector资产（管理员）
   @Put('collector/:adminId')
   @UseGuards(RolesGuard)
-  @Roles(ManagementRoles.管理员)
+  @Roles(ManagementRoles.ADMIN)
   async updateCollectorAsset(
     @Param('adminId', ParseIntPipe) adminId: number,
     @Body() data: UpdateCollectorAssetDto,
@@ -106,7 +106,7 @@ export class AssetManagementController {
   // 更新risk_controller资产（管理员）
   @Put('risk-controller/:adminId')
   @UseGuards(RolesGuard)
-  @Roles(ManagementRoles.管理员)
+  @Roles(ManagementRoles.ADMIN)
   async updateRiskControllerAsset(
     @Param('adminId', ParseIntPipe) adminId: number,
     @Body() data: UpdateRiskControllerAssetDto,
@@ -154,7 +154,7 @@ export class AssetManagementController {
     @CurrentUser() user: { id: number; role: string },
   ): Promise<ApiResponseDto> {
     // 检查权限：只能查看自己的数据，或者管理员可以查看所有
-    if (user.role !== '管理员' && user.id !== adminId) {
+    if (user.role !== 'ADMIN' && user.id !== adminId) {
       return ResponseHelper.error('无权访问', 403);
     }
 
@@ -178,7 +178,7 @@ export class AssetManagementController {
     @CurrentUser() user: { id: number; role: string },
   ): Promise<ApiResponseDto> {
     // 检查权限：只能查看自己的数据，或者管理员可以查看所有
-    if (user.role !== '管理员' && user.id !== adminId) {
+    if (user.role !== 'ADMIN' && user.id !== adminId) {
       return ResponseHelper.error('无权访问', 403);
     }
 

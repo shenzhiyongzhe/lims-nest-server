@@ -36,7 +36,11 @@ export class RepaymentSchedulesController {
     private readonly loanAccountsService: LoanAccountsService,
   ) {}
   @Get('today/status')
-  @Roles(ManagementRoles.负责人, ManagementRoles.风控人, ManagementRoles.收款人)
+  @Roles(
+    ManagementRoles.COLLECTOR,
+    ManagementRoles.RISK_CONTROLLER,
+    ManagementRoles.PAYEE,
+  )
   async findByStatusToday(
     @Query('status') status: RepaymentScheduleStatus,
     @CurrentUser() user: { id: number; role: string },
@@ -72,7 +76,11 @@ export class RepaymentSchedulesController {
     return ResponseHelper.success(data, '获取还款计划成功');
   }
   @Post()
-  @Roles(ManagementRoles.管理员, ManagementRoles.负责人, ManagementRoles.风控人)
+  @Roles(
+    ManagementRoles.ADMIN,
+    ManagementRoles.COLLECTOR,
+    ManagementRoles.RISK_CONTROLLER,
+  )
   async create(
     @Body() data: { loan_id: string },
     @CurrentUser() user: { id: number; role: string },

@@ -70,7 +70,7 @@ export class LoanAccountRolesController {
   }
 
   @Delete(':loanAccountId/:adminId/:roleType')
-  @Roles(ManagementRoles.负责人)
+  @Roles(ManagementRoles.COLLECTOR)
   async deleteRole(
     @Param('loanAccountId') loanAccountId: string,
     @Param('adminId', ParseIntPipe) adminId: number,

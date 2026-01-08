@@ -18,11 +18,11 @@ export class AuthController {
       return ResponseHelper.error('未登录', 401);
     }
 
-    // If role is 管理员, enrich from DB (keeps existing behavior)
-    if (user.role === '管理员') {
+    // If role is ADMIN, enrich from DB (keeps existing behavior)
+    if (user.role === 'ADMIN') {
       const admin = await this.prisma.admin.findUnique({
         where: { id: user.id },
-        select: { id: true, username: true, phone: true, role: true },
+        select: { id: true, username: true, role: true },
       });
       if (!admin) {
         return ResponseHelper.error('用户不存在', 404);

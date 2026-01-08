@@ -26,7 +26,7 @@ export class RepaymentRecordsService {
     let where: any = { user_id: userId };
 
     // 根据管理员角色过滤数据
-    if (admin.role === '负责人') {
+    if (admin.role === 'COLLECTOR') {
       // 收款人只能看到自己负责的贷款的还款记录
       const loanAccounts = await this.prisma.loanAccount.findMany({
         where: { collector_id: admin.id },
@@ -65,7 +65,7 @@ export class RepaymentRecordsService {
     let where: any = { loan_id: loanId };
 
     // 根据管理员角色过滤数据
-    if (admin.role === '负责人') {
+    if (admin.role === 'COLLECTOR') {
       // 收款人只能看到自己负责的贷款的还款记录
       const loanAccount = await this.prisma.loanAccount.findFirst({
         where: {
@@ -153,7 +153,7 @@ export class RepaymentRecordsService {
 
     let where: any = {};
     // 根据管理员角色过滤数据
-    if (admin.role === '风控人') {
+    if (admin.role === 'RISK_CONTROLLER') {
       // 风控人只能看到自己负责的贷款的还款记录
       let loanAccounts = await this.prisma.loanAccount.findMany({
         where: { risk_controller_id: admin.id },
@@ -189,7 +189,7 @@ export class RepaymentRecordsService {
       }
 
       where.loan_id = { in: loanIds };
-    } else if (admin.role === '负责人') {
+    } else if (admin.role === 'COLLECTOR') {
       // 负责人只能查看自己负责的贷款的还款记录
       let loanAccounts = await this.prisma.loanAccount.findMany({
         where: { collector_id: admin.id },

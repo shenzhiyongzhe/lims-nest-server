@@ -22,9 +22,4 @@ export class ResponseAdminDto {
   @IsString()
   @Length(1, 16)
   role: string;
-
-  @IsOptional()
-  @IsString()
-  @Matches(/^\d{11}$/)
-  phone: string;
 }

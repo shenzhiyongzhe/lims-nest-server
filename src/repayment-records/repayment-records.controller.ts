@@ -25,10 +25,10 @@ export class RepaymentRecordsController {
 
   @Get()
   @Roles(
-    ManagementRoles.管理员,
-    ManagementRoles.负责人,
-    ManagementRoles.风控人,
-    ManagementRoles.收款人,
+    ManagementRoles.ADMIN,
+    ManagementRoles.COLLECTOR,
+    ManagementRoles.RISK_CONTROLLER,
+    ManagementRoles.PAYEE,
   )
   async findAll(
     @Query() query: PaginationQueryDto,
@@ -46,7 +46,11 @@ export class RepaymentRecordsController {
   }
 
   @Get('user/:userId')
-  @Roles(ManagementRoles.负责人, ManagementRoles.风控人, ManagementRoles.收款人)
+  @Roles(
+    ManagementRoles.COLLECTOR,
+    ManagementRoles.RISK_CONTROLLER,
+    ManagementRoles.PAYEE,
+  )
   async findByUser(
     @Param('userId', ParseIntPipe) userId: number,
     @CurrentUser() user: any,
@@ -60,7 +64,11 @@ export class RepaymentRecordsController {
   }
 
   @Get('loan/:loanId')
-  @Roles(ManagementRoles.负责人, ManagementRoles.风控人, ManagementRoles.收款人)
+  @Roles(
+    ManagementRoles.COLLECTOR,
+    ManagementRoles.RISK_CONTROLLER,
+    ManagementRoles.PAYEE,
+  )
   async findByLoan(
     @Param('loanId') loanId: string,
     @CurrentUser() user: any,

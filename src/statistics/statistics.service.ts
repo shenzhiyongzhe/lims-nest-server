@@ -593,9 +593,11 @@ export class StatisticsService {
         loan_id: { in: loanAccountIds },
         status: 'active',
       },
-      select: { id: true },
+      select: { loan_id: true },
     });
-    const activeCount = activeSchedules.length;
+    // 根据 loan_id 去重
+    const uniqueActiveLoanIds = new Set(activeSchedules.map((s) => s.loan_id));
+    const activeCount = uniqueActiveLoanIds.size;
     // 今日协商中
 
     const todayNegotiatedLoans = await this.prisma.loanAccount.findMany({
@@ -692,9 +694,13 @@ export class StatisticsService {
             lt: yesterdayStart,
           },
         },
-        select: { id: true },
+        select: { loan_id: true },
       });
-    const yesterdayOverdueCount = yesterdayOverdueSchedules.length;
+    // 根据 loan_id 去重
+    const uniqueYesterdayOverdueLoanIds = new Set(
+      yesterdayOverdueSchedules.map((s) => s.loan_id),
+    );
+    const yesterdayOverdueCount = uniqueYesterdayOverdueLoanIds.size;
 
     // 本月新增
     const thisMonthNewLoanAccounts = await this.prisma.loanAccount.findMany({
@@ -961,136 +967,216 @@ export class StatisticsService {
     const dateForDb = new Date(dateStr + 'T12:00:00.000Z');
 
     // 获取所有 collector 和 risk_controller 角色
-    const roles = await this.prisma.loanAccountRole.findMany({
+    // 使用 groupBy 确保真正去重
+    const rolesGrouped = await this.prisma.loanAccountRole.groupBy({
+      by: ['admin_id', 'role_type'],
       where: {
         role_type: {
           in: ['collector', 'risk_controller'],
         },
       },
-      include: {
-        admin: {
-          select: {
-            id: true,
-            username: true,
-          },
-        },
-      },
-      distinct: ['admin_id', 'role_type'],
     });
 
-    // 按 admin_id + role_type 分组
+    // 获取所有相关的 admin 信息
+    const adminIds = [...new Set(rolesGrouped.map((r) => r.admin_id))];
+    const admins = await this.prisma.admin.findMany({
+      where: {
+        id: {
+          in: adminIds,
+        },
+      },
+      select: {
+        id: true,
+        username: true,
+      },
+    });
+
+    const adminMap = new Map(admins.map((a) => [a.id, a.username]));
+
+    // 按 admin_id + role_type 分组，确保唯一
     const adminRoleMap = new Map<
       string,
       { adminId: number; adminName: string; roleType: string }
     >();
-    for (const role of roles) {
+    for (const role of rolesGrouped) {
       const key = `${role.admin_id}_${role.role_type}`;
-      if (!adminRoleMap.has(key)) {
+      const adminName = adminMap.get(role.admin_id) || '';
+      if (!adminRoleMap.has(key) && adminName) {
         adminRoleMap.set(key, {
           adminId: role.admin_id,
-          adminName: role.admin.username,
+          adminName: adminName,
           roleType: role.role_type,
         });
       }
     }
 
-    // 使用事务批量保存
+    // 使用事务批量保存，添加错误处理
     await this.prisma.$transaction(
       async (tx) => {
         for (const [, adminRole] of adminRoleMap.entries()) {
-          // 获取统计数据
-          const statistics = await this.getCollectorDetailedStatistics(
-            adminRole.adminId,
-            adminRole.roleType as 'collector' | 'risk_controller',
-            date,
-          );
+          try {
+            // 获取统计数据
+            const statistics = await this.getCollectorDetailedStatistics(
+              adminRole.adminId,
+              adminRole.roleType as 'collector' | 'risk_controller',
+              date,
+            );
 
-          // 映射字段：camelCase -> snake_case
-          await tx.dailyStatistics.upsert({
-            where: {
-              admin_id_date_role: {
+            // 映射字段：camelCase -> snake_case
+            await tx.dailyStatistics.upsert({
+              where: {
+                admin_id_date_role: {
+                  admin_id: adminRole.adminId,
+                  date: dateForDb,
+                  role: adminRole.roleType,
+                },
+              },
+              create: {
                 admin_id: adminRole.adminId,
+                admin_name: adminRole.adminName,
                 date: dateForDb,
                 role: adminRole.roleType,
+                // 总统计字段
+                total_amount: statistics.totalAmount,
+                total_in_stock_amount: statistics.totalInStockAmount,
+                total_handling_fee: statistics.totalHandlingFee,
+                total_fines: statistics.totalFines,
+                total_blacklist_count: statistics.totalBlacklistCount,
+                total_negotiated_count: statistics.totalNegotiatedCount,
+                total_in_stock_count: statistics.totalInStockCount,
+                total_received_amount: statistics.totalReceivedAmount,
+                // 今日统计字段
+                today_paid_count: statistics.todayPaidCount,
+                today_pending_count: statistics.todayPendingCount,
+                yesterday_overdue_count: statistics.yesterdayOverdueCount,
+                active_count: statistics.activeCount,
+                today_negotiated_count: statistics.todayNegotiatedCount,
+                today_blacklist_count: statistics.todayBlacklistCount,
+                today_collection: statistics.todayCollection,
+                yesterday_collection: statistics.yesterdayCollection,
+                today_new_amount: statistics.todayNewAmount,
+                today_settled_amount: statistics.todaySettledAmount,
+                today_unpaid_amount: statistics.todayUnpaidAmount,
+                today_handling_fee: statistics.todayHandlingFee,
+                today_fines: statistics.todayFines,
+                // 本月统计字段
+                this_month_new_amount: statistics.thisMonthNewAmount,
+                this_month_settled_amount: statistics.thisMonthSettledAmount,
+                this_month_handling_fee: statistics.thisMonthHandlingFee,
+                this_month_fines: statistics.thisMonthFines,
+                this_month_negotiated_count:
+                  statistics.thisMonthNegotiatedCount,
+                this_month_blacklist_count: statistics.thisMonthBlacklistCount,
+                // 上个月统计字段
+                last_month_handling_fee: statistics.lastMonthHandlingFee,
+                last_month_fines: statistics.lastMonthFines,
+                last_month_blacklist_count: statistics.lastMonthBlacklistCount,
               },
-            },
-            create: {
-              admin_id: adminRole.adminId,
-              admin_name: adminRole.adminName,
-              date: dateForDb,
-              role: adminRole.roleType,
-              // 总统计字段
-              total_amount: statistics.totalAmount,
-              total_in_stock_amount: statistics.totalInStockAmount,
-              total_handling_fee: statistics.totalHandlingFee,
-              total_fines: statistics.totalFines,
-              total_blacklist_count: statistics.totalBlacklistCount,
-              total_negotiated_count: statistics.totalNegotiatedCount,
-              total_in_stock_count: statistics.totalInStockCount,
-              total_received_amount: statistics.totalReceivedAmount,
-              // 今日统计字段
-              today_paid_count: statistics.todayPaidCount,
-              today_pending_count: statistics.todayPendingCount,
-              yesterday_overdue_count: statistics.yesterdayOverdueCount,
-              active_count: statistics.activeCount,
-              today_negotiated_count: statistics.todayNegotiatedCount,
-              today_blacklist_count: statistics.todayBlacklistCount,
-              today_collection: statistics.todayCollection,
-              yesterday_collection: statistics.yesterdayCollection,
-              today_new_amount: statistics.todayNewAmount,
-              today_settled_amount: statistics.todaySettledAmount,
-              today_unpaid_amount: statistics.todayUnpaidAmount,
-              today_handling_fee: statistics.todayHandlingFee,
-              today_fines: statistics.todayFines,
-              // 本月统计字段
-              this_month_new_amount: statistics.thisMonthNewAmount,
-              this_month_settled_amount: statistics.thisMonthSettledAmount,
-              this_month_handling_fee: statistics.thisMonthHandlingFee,
-              this_month_fines: statistics.thisMonthFines,
-              this_month_negotiated_count: statistics.thisMonthNegotiatedCount,
-              this_month_blacklist_count: statistics.thisMonthBlacklistCount,
-              // 上个月统计字段
-              last_month_handling_fee: statistics.lastMonthHandlingFee,
-              last_month_fines: statistics.lastMonthFines,
-              last_month_blacklist_count: statistics.lastMonthBlacklistCount,
-            },
-            update: {
-              // 总统计字段
-              total_amount: statistics.totalAmount,
-              total_in_stock_amount: statistics.totalInStockAmount,
-              total_handling_fee: statistics.totalHandlingFee,
-              total_fines: statistics.totalFines,
-              total_blacklist_count: statistics.totalBlacklistCount,
-              total_negotiated_count: statistics.totalNegotiatedCount,
-              total_in_stock_count: statistics.totalInStockCount,
-              total_received_amount: statistics.totalReceivedAmount,
-              // 今日统计字段
-              today_paid_count: statistics.todayPaidCount,
-              today_pending_count: statistics.todayPendingCount,
-              yesterday_overdue_count: statistics.yesterdayOverdueCount,
-              active_count: statistics.activeCount,
-              today_negotiated_count: statistics.todayNegotiatedCount,
-              today_blacklist_count: statistics.todayBlacklistCount,
-              today_collection: statistics.todayCollection,
-              yesterday_collection: statistics.yesterdayCollection,
-              today_new_amount: statistics.todayNewAmount,
-              today_settled_amount: statistics.todaySettledAmount,
-              today_unpaid_amount: statistics.todayUnpaidAmount,
-              today_handling_fee: statistics.todayHandlingFee,
-              today_fines: statistics.todayFines,
-              // 本月统计字段
-              this_month_new_amount: statistics.thisMonthNewAmount,
-              this_month_settled_amount: statistics.thisMonthSettledAmount,
-              this_month_handling_fee: statistics.thisMonthHandlingFee,
-              this_month_fines: statistics.thisMonthFines,
-              this_month_negotiated_count: statistics.thisMonthNegotiatedCount,
-              this_month_blacklist_count: statistics.thisMonthBlacklistCount,
-              // 上个月统计字段
-              last_month_handling_fee: statistics.lastMonthHandlingFee,
-              last_month_fines: statistics.lastMonthFines,
-              last_month_blacklist_count: statistics.lastMonthBlacklistCount,
-            },
-          });
+              update: {
+                // 总统计字段
+                total_amount: statistics.totalAmount,
+                total_in_stock_amount: statistics.totalInStockAmount,
+                total_handling_fee: statistics.totalHandlingFee,
+                total_fines: statistics.totalFines,
+                total_blacklist_count: statistics.totalBlacklistCount,
+                total_negotiated_count: statistics.totalNegotiatedCount,
+                total_in_stock_count: statistics.totalInStockCount,
+                total_received_amount: statistics.totalReceivedAmount,
+                // 今日统计字段
+                today_paid_count: statistics.todayPaidCount,
+                today_pending_count: statistics.todayPendingCount,
+                yesterday_overdue_count: statistics.yesterdayOverdueCount,
+                active_count: statistics.activeCount,
+                today_negotiated_count: statistics.todayNegotiatedCount,
+                today_blacklist_count: statistics.todayBlacklistCount,
+                today_collection: statistics.todayCollection,
+                yesterday_collection: statistics.yesterdayCollection,
+                today_new_amount: statistics.todayNewAmount,
+                today_settled_amount: statistics.todaySettledAmount,
+                today_unpaid_amount: statistics.todayUnpaidAmount,
+                today_handling_fee: statistics.todayHandlingFee,
+                today_fines: statistics.todayFines,
+                // 本月统计字段
+                this_month_new_amount: statistics.thisMonthNewAmount,
+                this_month_settled_amount: statistics.thisMonthSettledAmount,
+                this_month_handling_fee: statistics.thisMonthHandlingFee,
+                this_month_fines: statistics.thisMonthFines,
+                this_month_negotiated_count:
+                  statistics.thisMonthNegotiatedCount,
+                this_month_blacklist_count: statistics.thisMonthBlacklistCount,
+                // 上个月统计字段
+                last_month_handling_fee: statistics.lastMonthHandlingFee,
+                last_month_fines: statistics.lastMonthFines,
+                last_month_blacklist_count: statistics.lastMonthBlacklistCount,
+              },
+            });
+          } catch (error) {
+            // 如果是唯一约束错误，记录日志并尝试使用 updateMany
+            if (
+              error.code === 'P2002' &&
+              error.meta?.target?.includes('admin_id_date_role')
+            ) {
+              console.error(
+                `唯一约束冲突，尝试更新现有记录: admin_id=${adminRole.adminId}, date=${dateForDb.toISOString()}, role=${adminRole.roleType}`,
+              );
+              // 重新获取统计数据
+              const statistics = await this.getCollectorDetailedStatistics(
+                adminRole.adminId,
+                adminRole.roleType as 'collector' | 'risk_controller',
+                date,
+              );
+              // 使用 updateMany 更新现有记录
+              await tx.dailyStatistics.updateMany({
+                where: {
+                  admin_id: adminRole.adminId,
+                  date: dateForDb,
+                  role: adminRole.roleType,
+                },
+                data: {
+                  // 总统计字段
+                  total_amount: statistics.totalAmount,
+                  total_in_stock_amount: statistics.totalInStockAmount,
+                  total_handling_fee: statistics.totalHandlingFee,
+                  total_fines: statistics.totalFines,
+                  total_blacklist_count: statistics.totalBlacklistCount,
+                  total_negotiated_count: statistics.totalNegotiatedCount,
+                  total_in_stock_count: statistics.totalInStockCount,
+                  total_received_amount: statistics.totalReceivedAmount,
+                  // 今日统计字段
+                  today_paid_count: statistics.todayPaidCount,
+                  today_pending_count: statistics.todayPendingCount,
+                  yesterday_overdue_count: statistics.yesterdayOverdueCount,
+                  active_count: statistics.activeCount,
+                  today_negotiated_count: statistics.todayNegotiatedCount,
+                  today_blacklist_count: statistics.todayBlacklistCount,
+                  today_collection: statistics.todayCollection,
+                  yesterday_collection: statistics.yesterdayCollection,
+                  today_new_amount: statistics.todayNewAmount,
+                  today_settled_amount: statistics.todaySettledAmount,
+                  today_unpaid_amount: statistics.todayUnpaidAmount,
+                  today_handling_fee: statistics.todayHandlingFee,
+                  today_fines: statistics.todayFines,
+                  // 本月统计字段
+                  this_month_new_amount: statistics.thisMonthNewAmount,
+                  this_month_settled_amount: statistics.thisMonthSettledAmount,
+                  this_month_handling_fee: statistics.thisMonthHandlingFee,
+                  this_month_fines: statistics.thisMonthFines,
+                  this_month_negotiated_count:
+                    statistics.thisMonthNegotiatedCount,
+                  this_month_blacklist_count:
+                    statistics.thisMonthBlacklistCount,
+                  // 上个月统计字段
+                  last_month_handling_fee: statistics.lastMonthHandlingFee,
+                  last_month_fines: statistics.lastMonthFines,
+                  last_month_blacklist_count:
+                    statistics.lastMonthBlacklistCount,
+                },
+              });
+            } else {
+              // 其他错误，重新抛出
+              throw error;
+            }
+          }
         }
       },
       {

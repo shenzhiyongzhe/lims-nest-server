@@ -13,7 +13,7 @@ export class LoanAccountRolesService {
     pageSize: number,
   ): Promise<any> {
     const where = {} as any;
-    if (roleType !== '管理员') {
+    if (roleType !== 'ADMIN') {
       where.admin_id = adminId;
       where.role_type = transformRoleType(roleType);
     }
@@ -119,7 +119,7 @@ export class LoanAccountRolesService {
     roleType: string,
   ): Promise<any[]> {
     const where = {} as any;
-    if (roleType !== '管理员') {
+    if (roleType !== 'ADMIN') {
       where.admin_id = adminId;
       where.role_type = transformRoleType(roleType);
     }

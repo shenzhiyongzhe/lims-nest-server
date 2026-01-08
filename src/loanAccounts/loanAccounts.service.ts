@@ -38,11 +38,11 @@ export class LoanAccountsService {
     userRole: string,
   ): Promise<Array<{ id: number; username: string; role: string }>> {
     // 管理员：返回所有负责人和风控人
-    if (userRole === '管理员') {
+    if (userRole === 'ADMIN') {
       const admins = await this.prisma.admin.findMany({
         where: {
           role: {
-            in: ['负责人', '风控人'],
+            in: ['COLLECTOR', 'RISK_CONTROLLER'],
           },
         },
         select: {
@@ -62,7 +62,7 @@ export class LoanAccountsService {
     }
 
     // 负责人：获取与他同一 loanAccounts 下的风控人
-    if (userRole === '负责人') {
+    if (userRole === 'COLLECTOR') {
       // 1. 获取该负责人关联的所有 loan_account_id
       const collectorRoles = await this.prisma.loanAccountRole.findMany({
         where: {
@@ -109,7 +109,7 @@ export class LoanAccountsService {
           id: {
             in: riskControllerIds,
           },
-          role: '风控人',
+          role: 'RISK_CONTROLLER',
         },
         select: {
           id: true,
@@ -129,7 +129,7 @@ export class LoanAccountsService {
     }
 
     // 风控人：获取与他关联的负责人
-    if (userRole === '风控人') {
+    if (userRole === 'RISK_CONTROLLER') {
       // 1. 获取该风控人关联的所有 loan_account_id
       const riskControllerRoles = await this.prisma.loanAccountRole.findMany({
         where: {
@@ -176,7 +176,7 @@ export class LoanAccountsService {
           id: {
             in: collectorIds,
           },
-          role: '负责人',
+          role: 'COLLECTOR',
         },
         select: {
           id: true,
@@ -601,7 +601,7 @@ export class LoanAccountsService {
         select: { role: true },
       });
 
-      if (admin && admin.role !== '管理员') {
+      if (admin && admin.role !== 'ADMIN') {
         const loanAccountRoles = await this.prisma.loanAccountRole.findMany({
           where: {
             admin_id: adminId,
@@ -911,36 +911,36 @@ export class LoanAccountsService {
 
     sortedLoans.forEach((loan) => {
       // 根据当前用户角色决定提取哪个归属人
-      if (admin && admin.role === '负责人') {
+      if (admin && admin.role === 'COLLECTOR') {
         // 负责人访问：提取关联的风控人
         if (loan.risk_controller) {
           if (!relatedAdminsMap.has(loan.risk_controller.id)) {
             relatedAdminsMap.set(loan.risk_controller.id, {
               id: loan.risk_controller.id,
               username: loan.risk_controller.username,
-              role: '风控人',
+              role: 'RISK_CONTROLLER',
             });
           }
         }
-      } else if (admin && admin.role === '风控人') {
+      } else if (admin && admin.role === 'RISK_CONTROLLER') {
         // 风控人访问：提取关联的负责人
         if (loan.collector) {
           if (!relatedAdminsMap.has(loan.collector.id)) {
             relatedAdminsMap.set(loan.collector.id, {
               id: loan.collector.id,
               username: loan.collector.username,
-              role: '负责人',
+              role: 'COLLECTOR',
             });
           }
         }
-      } else if (admin && admin.role === '管理员') {
+      } else if (admin && admin.role === 'ADMIN') {
         // 管理员访问：提取所有负责人和风控人
         if (loan.collector) {
           if (!relatedAdminsMap.has(loan.collector.id)) {
             relatedAdminsMap.set(loan.collector.id, {
               id: loan.collector.id,
               username: loan.collector.username,
-              role: '负责人',
+              role: 'COLLECTOR',
             });
           }
         }
@@ -949,7 +949,7 @@ export class LoanAccountsService {
             relatedAdminsMap.set(loan.risk_controller.id, {
               id: loan.risk_controller.id,
               username: loan.risk_controller.username,
-              role: '风控人',
+              role: 'RISK_CONTROLLER',
             });
           }
         }

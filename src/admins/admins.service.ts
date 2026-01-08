@@ -25,7 +25,7 @@ export class AdminService {
       });
 
       // 如果创建的是收款人，自动创建对应的 Payee
-      if (created.role === '收款人') {
+      if (created.role === 'PAYEE') {
         const paymentLimit = 1000;
         await tx.payee.create({
           data: {
@@ -55,7 +55,7 @@ export class AdminService {
     return this.prisma.admin.findUnique({ where: { id } });
   }
   toResponse(admin: Admin): ResponseAdminDto {
-    const { id, username, phone, role, password } = admin;
-    return { id, username, phone: phone ?? '', role, password: password ?? '' };
+    const { id, username, role, password } = admin;
+    return { id, username, role, password: password ?? '' };
   }
 }

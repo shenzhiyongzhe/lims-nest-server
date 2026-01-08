@@ -17,7 +17,7 @@ import { ApiResponseDto } from '../common/dto/api-response.dto';
 
 @Controller('cron')
 @UseGuards(AuthGuard, RolesGuard)
-@Roles(ManagementRoles.管理员, ManagementRoles.负责人) // 只有管理员可以手动触发定时任务
+@Roles(ManagementRoles.ADMIN, ManagementRoles.COLLECTOR) // 只有管理员可以手动触发定时任务
 export class CronController {
   constructor(
     private readonly overdueService: OverdueService,

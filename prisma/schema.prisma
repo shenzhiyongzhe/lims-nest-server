@@ -27,21 +27,19 @@ model User {
   @@map("users")
 }
 
-// 复用的枚举（还款状态）
 enum ManagementRoles {
-  管理员
-  财务员
-  风控人
-  负责人
-  收款人
-  打款人
+  ADMIN
+  FINANCIAL
+  RISK_CONTROLLER
+  COLLECTOR
+  PAYEE
+  PAYER
 }
 
 model Admin {
   id        Int             @id @default(autoincrement())
   username  String          @db.VarChar(10)
   password  String          @default("123456") @db.VarChar(32)
-  phone     String?         @db.VarChar(11)
   role      ManagementRoles
   createdAt DateTime        @default(now())
   updatedAt DateTime?       @updatedAt

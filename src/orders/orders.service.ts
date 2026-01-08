@@ -69,7 +69,7 @@ export class OrdersService {
     }
 
     const role = await this.getAdminRole(adminId);
-    if (role === '收款人') {
+    if (role === 'PAYEE') {
       const payeeId = await this.getPayeeIdByAdmin(adminId);
       if (!payeeId) {
         throw new BadRequestException('未绑定收款人');
@@ -94,7 +94,7 @@ export class OrdersService {
 
   async createOrder(adminId: number, body: CreateOrderDto) {
     const role = await this.getAdminRole(adminId);
-    if (role !== '管理员') {
+    if (role !== 'ADMIN') {
       throw new ForbiddenException('无权限');
     }
 
@@ -147,7 +147,7 @@ export class OrdersService {
 
     // 验证权限
     const role = await this.getAdminRole(adminId);
-    if (role === '收款人') {
+    if (role === 'PAYEE') {
       const payeeId = await this.getPayeeIdByAdmin(adminId);
       if (!payeeId || order.payee_id !== payeeId) {
         throw new ForbiddenException('无权限');
@@ -399,7 +399,7 @@ export class OrdersService {
     }
 
     const role = await this.getAdminRole(adminId);
-    if (role === '收款人') {
+    if (role === 'PAYEE') {
       const payeeId = await this.getPayeeIdByAdmin(adminId);
       if (!payeeId || order.payee_id !== payeeId) {
         throw new ForbiddenException('无权限');
@@ -510,7 +510,7 @@ export class OrdersService {
 
     const role = await this.getAdminRole(adminId);
     // 只有管理员可以查看所有订单，收款人只能查看自己的订单
-    if (role === '收款人') {
+    if (role === 'PAYEE') {
       const payeeId = await this.getPayeeIdByAdmin(adminId);
       if (!payeeId) {
         throw new BadRequestException('未绑定收款人');
@@ -859,7 +859,7 @@ export class OrdersService {
   async getManualProcessingOrders(adminId: number) {
     const role = await this.getAdminRole(adminId);
     // 允许 collector（收款人）和管理员访问
-    if (role !== '负责人' && role !== '管理员') {
+    if (role !== 'COLLECTOR' && role !== 'ADMIN') {
       throw new ForbiddenException('无权限访问');
     }
 
@@ -934,7 +934,7 @@ export class OrdersService {
     },
   ) {
     const role = await this.getAdminRole(adminId);
-    if (role !== '负责人' && role !== '管理员') {
+    if (role !== 'COLLECTOR' && role !== 'ADMIN') {
       throw new ForbiddenException('无权限处理');
     }
 
@@ -1153,7 +1153,7 @@ export class OrdersService {
 
     const role = await this.getAdminRole(adminId);
     // 收款人只能删除自己的订单
-    if (role === '收款人') {
+    if (role === 'PAYEE') {
       const payeeId = await this.getPayeeIdByAdmin(adminId);
       if (!payeeId || order.payee_id !== payeeId) {
         throw new ForbiddenException('无权限删除此订单');

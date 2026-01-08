@@ -26,7 +26,7 @@ export class StatisticsController {
     @CurrentUser() user: { id: number; role: string },
   ) {
     // 管理员查询collector/risk_controller详细统计数据
-    if (user.role === '管理员') {
+    if (user.role === 'ADMIN') {
       // 解析参数
       const roleType =
         (query.roleType as 'collector' | 'risk_controller') || 'collector';
@@ -43,8 +43,9 @@ export class StatisticsController {
     }
 
     // 检查用户角色：collector和risk_controller获取详细统计数据
-    if (user.role === '负责人' || user.role === '风控人') {
-      const roleType = user.role === '负责人' ? 'collector' : 'risk_controller';
+    if (user.role === 'COLLECTOR' || user.role === 'RISK_CONTROLLER') {
+      const roleType =
+        user.role === 'COLLECTOR' ? 'collector' : 'risk_controller';
 
       // 解析归属筛选参数
       const riskControllerId = query.riskControllerId
@@ -68,7 +69,11 @@ export class StatisticsController {
 
   @Get('admin')
   @UseGuards(RolesGuard)
-  @Roles(ManagementRoles.管理员, ManagementRoles.风控人, ManagementRoles.负责人)
+  @Roles(
+    ManagementRoles.ADMIN,
+    ManagementRoles.RISK_CONTROLLER,
+    ManagementRoles.COLLECTOR,
+  )
   async getAdminStatistics() {
     // getAdminStatistics 方法内部已经处理了数据不存在的情况
     // 如果数据不存在，会自动创建默认统计记录

@@ -48,7 +48,7 @@ export class UsersController {
     const data = this.usersService.toResponse(user);
     return ResponseHelper.success(data, '获取用户成功');
   }
-  @Roles(ManagementRoles.管理员, ManagementRoles.风控人)
+  @Roles(ManagementRoles.ADMIN, ManagementRoles.RISK_CONTROLLER)
   @Post()
   async create(@Body() body: CreateUserDto): Promise<ApiResponseDto> {
     const user = await this.usersService.create(body);

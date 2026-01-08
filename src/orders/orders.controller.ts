@@ -30,7 +30,7 @@ export class OrdersController {
 
   @Get()
   @UseGuards(AuthGuard, RolesGuard)
-  @Roles(ManagementRoles.管理员, ManagementRoles.收款人)
+  @Roles(ManagementRoles.ADMIN, ManagementRoles.PAYEE)
   async getOrders(
     @CurrentUser() user: { id: number },
     @Query('status') status?: OrderStatus,
@@ -47,7 +47,7 @@ export class OrdersController {
 
   @Post()
   @UseGuards(AuthGuard, RolesGuard)
-  @Roles(ManagementRoles.收款人)
+  @Roles(ManagementRoles.PAYEE)
   async create(
     @CurrentUser() user: { id: number },
     @Body()
@@ -59,7 +59,7 @@ export class OrdersController {
 
   @Put()
   @UseGuards(AuthGuard, RolesGuard)
-  @Roles(ManagementRoles.收款人)
+  @Roles(ManagementRoles.PAYEE)
   async update(
     @CurrentUser() user: { id: number },
     @Body() body: { id: string; status: OrderStatus },
@@ -88,7 +88,7 @@ export class OrdersController {
 
   @Put('review-status')
   @UseGuards(AuthGuard, RolesGuard)
-  @Roles(ManagementRoles.收款人)
+  @Roles(ManagementRoles.PAYEE)
   async updateReviewStatus(
     @CurrentUser() user: { id: number },
     @Body()
@@ -130,7 +130,7 @@ export class OrdersController {
 
   @Get('review')
   @UseGuards(AuthGuard, RolesGuard)
-  @Roles(ManagementRoles.收款人)
+  @Roles(ManagementRoles.PAYEE)
   async getReviewOrders(
     @CurrentUser() user: { id: number },
     @Query('review_status') reviewStatus?: ReviewStatus,
@@ -146,7 +146,7 @@ export class OrdersController {
 
   @Post('review')
   @UseGuards(AuthGuard, RolesGuard)
-  @Roles(ManagementRoles.收款人)
+  @Roles(ManagementRoles.PAYEE)
   async reviewOrder(
     @CurrentUser() user: { id: number },
     @Body() body: { order_id: string; actual_paid_amount: number },
@@ -167,7 +167,7 @@ export class OrdersController {
     return ResponseHelper.success(updated, '审核成功');
   }
   @UseGuards(AuthGuard, RolesGuard)
-  @Roles(ManagementRoles.负责人)
+  @Roles(ManagementRoles.COLLECTOR)
   @Get('manual-processing')
   async getManualProcessingOrders(
     @CurrentUser() user: { id: number },
@@ -177,7 +177,7 @@ export class OrdersController {
   }
 
   @UseGuards(AuthGuard, RolesGuard)
-  @Roles(ManagementRoles.负责人)
+  @Roles(ManagementRoles.COLLECTOR)
   @Post('manual-processing/:orderId/process')
   async processManualOrder(
     @CurrentUser() user: { id: number },

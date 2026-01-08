@@ -30,7 +30,7 @@ import type { Response } from 'express';
 export class LoanAccountsController {
   constructor(private readonly loanAccountsService: LoanAccountsService) {}
   @UseGuards(AuthGuard, RolesGuard)
-  @Roles(ManagementRoles.管理员)
+  @Roles(ManagementRoles.ADMIN)
   @Get()
   async findAll(): Promise<ApiResponseDto> {
     const loans = await this.loanAccountsService.findAll();
@@ -38,10 +38,10 @@ export class LoanAccountsController {
   }
   @UseGuards(AuthGuard, RolesGuard)
   @Roles(
-    ManagementRoles.管理员,
-    ManagementRoles.负责人,
-    ManagementRoles.风控人,
-    ManagementRoles.收款人,
+    ManagementRoles.ADMIN,
+    ManagementRoles.COLLECTOR,
+    ManagementRoles.RISK_CONTROLLER,
+    ManagementRoles.PAYEE,
   )
   @Get('grouped-by-user')
   async groupedByUser(
@@ -98,7 +98,7 @@ export class LoanAccountsController {
   }
 
   @UseGuards(AuthGuard, RolesGuard)
-  @Roles(ManagementRoles.管理员)
+  @Roles(ManagementRoles.ADMIN)
   @Get('export/admin')
   async exportAdmin(@Res() res: Response) {
     const buffer = await this.loanAccountsService.exportAdminReport();
@@ -119,7 +119,11 @@ export class LoanAccountsController {
     res.send(buffer);
   }
   @UseGuards(AuthGuard, RolesGuard)
-  @Roles(ManagementRoles.管理员, ManagementRoles.负责人, ManagementRoles.风控人)
+  @Roles(
+    ManagementRoles.ADMIN,
+    ManagementRoles.COLLECTOR,
+    ManagementRoles.RISK_CONTROLLER,
+  )
   @Get('related-admins')
   async getRelatedAdmins(
     @CurrentUser() user: { id: number; role: string },
@@ -146,7 +150,7 @@ export class LoanAccountsController {
   }
 
   @UseGuards(AuthGuard, RolesGuard)
-  @Roles(ManagementRoles.管理员, ManagementRoles.风控人)
+  @Roles(ManagementRoles.ADMIN, ManagementRoles.RISK_CONTROLLER)
   @Post()
   async create(
     @Body() body: CreateLoanAccountDto,
@@ -172,7 +176,11 @@ export class LoanAccountsController {
   }
 
   @UseGuards(AuthGuard, RolesGuard)
-  @Roles(ManagementRoles.管理员, ManagementRoles.负责人, ManagementRoles.风控人)
+  @Roles(
+    ManagementRoles.ADMIN,
+    ManagementRoles.COLLECTOR,
+    ManagementRoles.RISK_CONTROLLER,
+  )
   @Put(':id')
   async update(
     @Param('id') id: string,
@@ -188,7 +196,11 @@ export class LoanAccountsController {
   }
 
   @UseGuards(AuthGuard, RolesGuard)
-  @Roles(ManagementRoles.管理员, ManagementRoles.负责人, ManagementRoles.风控人)
+  @Roles(
+    ManagementRoles.ADMIN,
+    ManagementRoles.COLLECTOR,
+    ManagementRoles.RISK_CONTROLLER,
+  )
   @Put(':id/status')
   async updateStatus(
     @Param('id') id: string,
@@ -222,7 +234,7 @@ export class LoanAccountsController {
   }
 
   @UseGuards(AuthGuard, RolesGuard)
-  @Roles(ManagementRoles.管理员)
+  @Roles(ManagementRoles.ADMIN)
   @Delete(':id')
   async delete(
     @Param('id') id: string,

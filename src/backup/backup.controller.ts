@@ -8,7 +8,7 @@ import type { Response } from 'express';
 
 @Controller('backup')
 @UseGuards(AuthGuard, RolesGuard)
-@Roles(ManagementRoles.管理员)
+@Roles(ManagementRoles.ADMIN)
 export class BackupController {
   constructor(private readonly backupService: BackupService) {}
 

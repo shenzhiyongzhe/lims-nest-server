@@ -97,6 +97,17 @@ export class LoanAccountsController {
     return ResponseHelper.success(rows, '获取用户贷款记录成功');
   }
 
+  @Get('user/:userId/latest')
+  async findLatestByUser(
+    @Param('userId', ParseIntPipe) userId: number,
+  ): Promise<ApiResponseDto> {
+    const loan = await this.loanAccountsService.findLatestByUserId(userId);
+    if (!loan) {
+      return ResponseHelper.success(null, '该用户暂无贷款记录');
+    }
+    return ResponseHelper.success(loan, '获取用户最近贷款记录成功');
+  }
+
   @UseGuards(AuthGuard, RolesGuard)
   @Roles(ManagementRoles.ADMIN)
   @Get('export/admin')

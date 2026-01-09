@@ -75,8 +75,21 @@ export class MobileTerminalService {
       0,
     );
 
+    const allRiskControllerAssets =
+      await this.prisma.riskControllerAssetManagement.findMany({
+        select: {
+          reduced_amount: true,
+        },
+      });
+    const riskControllerTotalReduction = allRiskControllerAssets.reduce(
+      (sum, asset) => sum + this.toNumber(asset.reduced_amount),
+      0,
+    );
     // 3. 计算剩余资金
-    const remainingFunds = riskControllerTotalAmount - collectorTotalReduction;
+    const remainingFunds =
+      riskControllerTotalAmount -
+      collectorTotalReduction -
+      riskControllerTotalReduction;
 
     return {
       risk_controller_total_amount: riskControllerTotalAmount,
@@ -131,22 +144,23 @@ export class MobileTerminalService {
           );
 
         // 获取本月收款（PayeeDailyStatistics中本月所有日期的daily_total总和）
-        const monthlyStats = await this.prisma.payeeDailyStatistics.findMany({
-          where: {
-            payee_id: payee.id,
-            date: {
-              gte: monthStart,
-              lte: monthEnd,
+        // 使用数据库聚合函数避免浮点数精度问题
+        const monthlyStatsAggregate =
+          await this.prisma.payeeDailyStatistics.aggregate({
+            where: {
+              payee_id: payee.id,
+              date: {
+                gte: monthStart,
+                lte: monthEnd,
+              },
             },
-          },
-          select: {
-            daily_total: true,
-          },
-        });
+            _sum: {
+              daily_total: true,
+            },
+          });
 
-        const monthlyCollection = monthlyStats.reduce(
-          (sum, stat) => sum + this.toNumber(stat.daily_total),
-          0,
+        const monthlyCollection = this.toNumber(
+          monthlyStatsAggregate._sum.daily_total,
         );
 
         return {
@@ -160,32 +174,108 @@ export class MobileTerminalService {
       }),
     );
 
-    // 计算汇总统计
-    // 本月总收款
-    const monthlyTotal = payeeListWithStats.reduce(
-      (sum, payee) => sum + payee.monthly_collection,
-      0,
+    // 计算汇总统计 - 从 RepaymentRecord 查询
+    // 数据库存储的是UTC时间，需要将上海时间（UTC+8）转换为UTC时间
+    const UTC_OFFSET_HOURS = 8; // 上海时间与UTC的时差（小时）
+    const UTC_OFFSET_MS = UTC_OFFSET_HOURS * 60 * 60 * 1000; // 转换为毫秒
+
+    // 上海时间今天的开始和结束时间
+    const shanghaiTodayStart = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+    );
+    const shanghaiTodayEnd = new Date(shanghaiTodayStart);
+    shanghaiTodayEnd.setHours(23, 59, 59, 999);
+
+    // 转换为UTC时间（减去8小时）
+    const todayStartUTC = new Date(
+      shanghaiTodayStart.getTime() - UTC_OFFSET_MS,
+    );
+    const todayEndUTC = new Date(shanghaiTodayEnd.getTime() - UTC_OFFSET_MS);
+
+    // 上海时间昨天的开始和结束时间
+    const shanghaiYesterdayStart = new Date(shanghaiTodayStart);
+    shanghaiYesterdayStart.setDate(shanghaiYesterdayStart.getDate() - 1);
+    const shanghaiYesterdayEnd = new Date(shanghaiYesterdayStart);
+    shanghaiYesterdayEnd.setHours(23, 59, 59, 999);
+
+    // 转换为UTC时间（减去8小时）
+    const yesterdayStartUTC = new Date(
+      shanghaiYesterdayStart.getTime() - UTC_OFFSET_MS,
+    );
+    const yesterdayEndUTC = new Date(
+      shanghaiYesterdayEnd.getTime() - UTC_OFFSET_MS,
     );
 
-    // 今日收款
-    const todayTotal = payeeListWithStats.reduce(
-      (sum, payee) => sum + payee.today_collection,
+    // 上海时间本月的开始和结束时间
+    const shanghaiMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const shanghaiMonthEnd = new Date(
+      now.getFullYear(),
+      now.getMonth() + 1,
       0,
+      23,
+      59,
+      59,
+      999,
     );
 
-    // 昨日收款
-    const yesterdayStats = await Promise.all(
-      payees.map((payee) =>
-        this.payeeDailyStatisticsService.getDailyStatistics(
-          payee.id,
-          yesterday,
-        ),
-      ),
+    // 转换为UTC时间（减去8小时）
+    const monthStartUTC = new Date(
+      shanghaiMonthStart.getTime() - UTC_OFFSET_MS,
     );
-    const yesterdayTotal = yesterdayStats.reduce(
-      (sum, stat) => sum + stat.daily_total,
-      0,
-    );
+    const monthEndUTC = new Date(shanghaiMonthEnd.getTime() - UTC_OFFSET_MS);
+
+    // 本月总收款 - 从 RepaymentRecord 查询（使用UTC时间）
+    // 使用数据库聚合函数避免浮点数精度问题
+    const monthlyAggregate = await this.prisma.repaymentRecord.aggregate({
+      where: {
+        paid_at: {
+          gte: monthStartUTC,
+          lte: monthEndUTC,
+        },
+      },
+      _sum: {
+        paid_amount: true,
+      },
+      _count: {
+        id: true,
+      },
+    });
+
+    const monthlyTotal = this.toNumber(monthlyAggregate._sum.paid_amount);
+
+    // 今日收款 - 从 RepaymentRecord 查询（使用UTC时间）
+    // 使用数据库聚合函数避免浮点数精度问题
+    const todayAggregate = await this.prisma.repaymentRecord.aggregate({
+      where: {
+        paid_at: {
+          gte: todayStartUTC,
+          lte: todayEndUTC,
+        },
+      },
+      _sum: {
+        paid_amount: true,
+      },
+    });
+
+    const todayTotal = this.toNumber(todayAggregate._sum.paid_amount);
+
+    // 昨日收款 - 从 RepaymentRecord 查询（使用UTC时间）
+    // 使用数据库聚合函数避免浮点数精度问题
+    const yesterdayAggregate = await this.prisma.repaymentRecord.aggregate({
+      where: {
+        paid_at: {
+          gte: yesterdayStartUTC,
+          lte: yesterdayEndUTC,
+        },
+      },
+      _sum: {
+        paid_amount: true,
+      },
+    });
+
+    const yesterdayTotal = this.toNumber(yesterdayAggregate._sum.paid_amount);
 
     return {
       payees: payeeListWithStats,

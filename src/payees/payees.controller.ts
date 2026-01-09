@@ -148,6 +148,22 @@ export class PayeesController {
   }
 
   @UseGuards(AuthGuard, RolesGuard)
+  @Get('me/qrcode')
+  async getMyQRCodes(
+    @CurrentUser() user: { id: number },
+    @Query('payment_method') payment_method?: PaymentMethod,
+    @Query('active') active?: string,
+  ): Promise<ApiResponseDto> {
+    const payeeId = await this.payeesService.getPayeeIdByAdmin(user.id);
+    const rows = await this.payeesService.findQRCodes({
+      payee_id: payeeId,
+      payment_method,
+      active: active !== undefined ? active === 'true' : undefined,
+    });
+    return ResponseHelper.success(rows, '获取二维码成功');
+  }
+
+  @UseGuards(AuthGuard, RolesGuard)
   @Get('me/statistics')
   async getMyStatistics(
     @CurrentUser() user: { id: number },

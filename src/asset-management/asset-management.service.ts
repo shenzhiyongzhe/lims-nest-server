@@ -42,8 +42,8 @@ export class AssetManagementService implements OnModuleInit {
       id: asset?.id || 0,
       admin_id: adminId,
       admin: admin,
-      total_handling_fee,
-      total_fines,
+      remaining_handling_fee: total_handling_fee - reduced_handling_fee,
+      remaining_fines: total_fines - reduced_fines,
       reduced_handling_fee,
       reduced_fines,
       created_at: asset?.created_at || null,
@@ -108,7 +108,7 @@ export class AssetManagementService implements OnModuleInit {
       id: asset?.id || 0,
       admin_id: adminId,
       admin: admin,
-      total_amount,
+      total_amount: total_amount,
       reduced_amount,
       created_at: asset?.created_at || null,
       updated_at: asset?.updated_at || null,
@@ -159,16 +159,21 @@ export class AssetManagementService implements OnModuleInit {
         const { total_handling_fee, total_fines } =
           await this.calculateTotalAmounts(loanAccountIds);
 
+        const reduced_handling_fee = asset
+          ? Number((asset as any).reduced_handling_fee || 0)
+          : 0;
+        const reduced_fines = asset
+          ? Number((asset as any).reduced_fines || 0)
+          : 0;
+
         return {
           id: asset?.id || 0,
           admin_id: admin.id,
           admin: admin,
-          total_handling_fee,
-          total_fines,
-          reduced_handling_fee: asset
-            ? Number((asset as any).reduced_handling_fee || 0)
-            : 0,
-          reduced_fines: asset ? Number((asset as any).reduced_fines || 0) : 0,
+          remaining_handling_fee: total_handling_fee - reduced_handling_fee,
+          remaining_fines: total_fines - reduced_fines,
+          reduced_handling_fee,
+          reduced_fines,
           created_at: asset?.created_at || null,
           updated_at: asset?.updated_at || null,
         };
@@ -255,12 +260,14 @@ export class AssetManagementService implements OnModuleInit {
           );
         }
 
+        const reduced_amount = asset ? Number(asset.reduced_amount || 0) : 0;
+
         return {
           id: asset?.id || 0,
           admin_id: admin.id,
           admin: admin,
-          total_amount,
-          reduced_amount: asset ? Number(asset.reduced_amount || 0) : 0,
+          total_amount: total_amount,
+          reduced_amount,
           created_at: asset?.created_at || null,
           updated_at: asset?.updated_at || null,
         };

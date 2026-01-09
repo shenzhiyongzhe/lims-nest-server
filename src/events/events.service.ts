@@ -138,6 +138,11 @@ export class EventsService {
       return { success: false, message: '收款人不存在' };
     }
 
+    // 检查是否被禁收
+    if (payee.is_disabled) {
+      return { success: false, message: '该收款人已被禁止收款' };
+    }
+
     const orderAmount = Number(order.amount);
     // 使用 remaining_limit 来判断是否足够
     if (payee.remaining_limit < orderAmount) {
@@ -233,6 +238,9 @@ export class EventsService {
     );
 
     const payees = await this.prisma.payee.findMany({
+      where: {
+        is_disabled: false, // 过滤掉被禁收的收款人
+      },
       include: {
         qrcode: {
           where: {
@@ -267,7 +275,7 @@ export class EventsService {
       }
 
       let priority = 0;
-      let delay = 0;
+      let delay = 3_000;
 
       const historyCount = await this.prisma.repaymentRecord.count({
         where: {
@@ -288,7 +296,7 @@ export class EventsService {
         customer.address === payee.address
       ) {
         priority += 500;
-        delay = 3_000;
+        delay = 2_000;
       }
 
       if (historyCount > 0) {
@@ -296,7 +304,6 @@ export class EventsService {
         delay = 1;
       }
 
-      if (delay === 0) delay = 10_000;
       payeePriorities.push({
         payee,
         priority,

@@ -1072,6 +1072,35 @@ export class LoanAccountsService {
     });
   }
 
+  async findLatestByUserId(userId: number): Promise<LoanAccount | null> {
+    const loan = await this.prisma.loanAccount.findFirst({
+      where: { user_id: userId },
+      include: {
+        user: true,
+        risk_controller: {
+          select: {
+            id: true,
+            username: true,
+          },
+        },
+        collector: {
+          select: {
+            id: true,
+            username: true,
+          },
+        },
+        lender: {
+          select: {
+            id: true,
+            username: true,
+          },
+        },
+      },
+      orderBy: { created_at: 'desc' },
+    });
+    return loan;
+  }
+
   async update(id: string, data: UpdateLoanAccountDto): Promise<LoanAccount> {
     return await this.prisma.$transaction(async (tx) => {
       // 获取更新前的数据，用于判断 due_start_date 是否改变

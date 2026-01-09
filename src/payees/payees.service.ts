@@ -97,7 +97,7 @@ export class PayeesService {
     };
   }
 
-  private async getPayeeIdByAdmin(adminId: number): Promise<number> {
+  async getPayeeIdByAdmin(adminId: number): Promise<number> {
     const payee = await this.prisma.payee.findFirst({
       where: { admin_id: adminId },
       select: { id: true },

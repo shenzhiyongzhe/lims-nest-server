@@ -4,6 +4,7 @@ import {
   IsString,
   IsOptional,
   IsPositive,
+  IsBoolean,
 } from 'class-validator';
 
 export class CreatePayeeDto {
@@ -27,6 +28,10 @@ export class CreatePayeeDto {
 
   @IsNumber()
   qrcode_number: number;
+
+  @IsBoolean()
+  @IsOptional()
+  is_disabled?: boolean;
 
   @IsDateString()
   @IsOptional()

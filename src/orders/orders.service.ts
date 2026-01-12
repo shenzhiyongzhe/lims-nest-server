@@ -92,26 +92,6 @@ export class OrdersService {
     });
   }
 
-  async createOrder(adminId: number, body: CreateOrderDto) {
-    const role = await this.getAdminRole(adminId);
-    if (role !== 'ADMIN') {
-      throw new ForbiddenException('无权限');
-    }
-
-    const id =
-      body.id && String(body.id).length > 0 ? body.id : crypto.randomUUID();
-    const created = await this.prisma.order.create({
-      data: {
-        ...body,
-        id,
-        expires_at: body.expires_at
-          ? new Date(body.expires_at)
-          : new Date(Date.now() + 90 * 1000),
-      },
-    });
-    return created;
-  }
-
   /**
    * 处理付款（部分还清或完全还清）
    * @param adminId 管理员ID
@@ -317,7 +297,8 @@ export class OrdersService {
             data: {
               loan_id: order.loan_id,
               user_id: order.customer_id,
-              paid_amount: incPaidAmount,
+              paid_amount: Math.floor(incPaidAmount),
+              paid_amount_decimal: incPaidAmount,
               paid_at: paidAtStr,
               payment_method: order.payment_method,
               actual_collector_id: actualCollectorId,
@@ -379,43 +360,6 @@ export class OrdersService {
 
       return updated;
     });
-  }
-
-  /**
-   * 部分还清
-   */
-  async partialPayment(adminId: number, orderId: string, paidAmount: number) {
-    return this.processPayment(adminId, orderId, paidAmount, true);
-  }
-
-  async updateStatus(adminId: number, id: string, status: OrderStatus) {
-    if (!id || !status) {
-      throw new BadRequestException('缺少必要参数');
-    }
-
-    const order = await this.prisma.order.findUnique({ where: { id } });
-    if (!order) {
-      throw new NotFoundException('订单不存在');
-    }
-
-    const role = await this.getAdminRole(adminId);
-    if (role === 'PAYEE') {
-      const payeeId = await this.getPayeeIdByAdmin(adminId);
-      if (!payeeId || order.payee_id !== payeeId) {
-        throw new ForbiddenException('无权限');
-      }
-    }
-
-    if (status === 'completed') {
-      // 使用统一的处理逻辑，金额为订单金额
-      return this.processPayment(adminId, id, Number(order.amount), false);
-    }
-
-    const simpleUpdated = await this.prisma.order.update({
-      where: { id },
-      data: { status, updated_at: new Date() },
-    });
-    return simpleUpdated;
   }
 
   /**
@@ -497,6 +441,7 @@ export class OrdersService {
   ) {
     const where: Prisma.OrderWhereInput = {
       review_status: reviewStatus ? reviewStatus : 'pending_review',
+      needs_manual_processing: false,
     };
 
     // 如果提供了日期，按日期筛选（基于updated_at，因为审核时订单状态会更新）
@@ -570,16 +515,6 @@ export class OrdersService {
       throw new BadRequestException('实付金额必须大于0');
     }
 
-    // 获取管理员信息
-    const admin = await this.prisma.admin.findUnique({
-      where: { id: adminId },
-      select: { username: true },
-    });
-
-    if (!admin) {
-      throw new ForbiddenException('管理员不存在');
-    }
-
     // 计算整数部分
     const actualPaidAmountInt = Math.floor(actualPaidAmount);
     const decimalPart = actualPaidAmount % 1;
@@ -650,6 +585,7 @@ export class OrdersService {
               loan_id: order.loan_id,
               user_id: order.customer_id,
               paid_amount: actualPaidAmountInt,
+              paid_amount_decimal: actualPaidAmount,
               paid_at: new Date(),
               payment_method: order.payment_method,
               actual_collector_id: order.payee.admin_id,
@@ -668,9 +604,7 @@ export class OrdersService {
           where: { id: orderId },
           data: {
             status: 'completed',
-            actual_paid_amount: actualPaidAmount,
-            processed_by_admin_id: adminId,
-            processed_by_admin_name: admin.username,
+            actual_paid_amount: actualPaidAmountInt,
             needs_manual_processing: true,
             manual_processing_status: 'unprocessed',
             updated_at: new Date(),
@@ -689,7 +623,7 @@ export class OrdersService {
         if (order.payee_id) {
           await this.payeeDailyStatisticsService.updateDailyStatistics(
             order.payee_id,
-            actualPaidAmount,
+            actualPaidAmountInt,
           );
         }
 
@@ -736,7 +670,6 @@ export class OrdersService {
 
         let totalPaidCapital = 0;
         let totalPaidInterest = 0;
-        let lastRepaymentDate: Date | null = null;
 
         // 2. 创建还款记录（绑定到 allSchedules[0]）
         if (!order.payee_id || !order.payee) {
@@ -764,8 +697,6 @@ export class OrdersService {
           });
           totalPaidCapital += scheduleCapital;
           totalPaidInterest += scheduleInterest;
-          // 记录最后一个还款计划的 due_start_date
-          lastRepaymentDate = schedule.due_start_date;
         }
 
         const repaymentRecord = await tx.repaymentRecord.create({
@@ -773,6 +704,7 @@ export class OrdersService {
             loan_id: order.loan_id,
             user_id: order.customer_id,
             paid_amount: actualPaidAmountInt,
+            paid_amount_decimal: actualPaidAmount,
             paid_at: new Date(),
             payment_method: order.payment_method,
             actual_collector_id: actualCollectorIdForAuto,
@@ -825,8 +757,6 @@ export class OrdersService {
           data: {
             status: 'completed',
             actual_paid_amount: actualPaidAmount,
-            processed_by_admin_id: adminId,
-            processed_by_admin_name: admin.username,
             needs_manual_processing: false,
             updated_at: new Date(),
           } as any,
@@ -844,7 +774,7 @@ export class OrdersService {
         if (order.payee_id) {
           await this.payeeDailyStatisticsService.updateDailyStatistics(
             order.payee_id,
-            actualPaidAmount,
+            actualPaidAmountInt,
           );
         }
 
@@ -952,7 +882,9 @@ export class OrdersService {
       // 1. 验证订单状态
       const order = await tx.order.findUnique({
         where: { id: orderId },
-        include: {
+        select: {
+          loan_id: true,
+          payee_id: true,
           payee: {
             select: {
               id: true,
@@ -960,6 +892,10 @@ export class OrdersService {
               admin_id: true,
             },
           },
+          payment_method: true,
+          actual_paid_amount: true,
+          needs_manual_processing: true,
+          manual_processing_status: true,
         },
       });
 
@@ -967,11 +903,11 @@ export class OrdersService {
         throw new NotFoundException('订单不存在');
       }
 
-      if ((order as any).needs_manual_processing !== true) {
+      if (order.needs_manual_processing !== true) {
         throw new BadRequestException('订单不需要手动处理');
       }
 
-      if ((order as any).manual_processing_status !== 'unprocessed') {
+      if (order.manual_processing_status !== 'unprocessed') {
         throw new BadRequestException('订单已处理');
       }
 
@@ -1069,30 +1005,36 @@ export class OrdersService {
             collected_by_type: 'manual',
           },
         });
-
-        // 5. 创建还款记录
-        if (!order.payee_id) {
-          throw new BadRequestException('订单未关联收款人');
-        }
-        await tx.repaymentRecord.create({
-          data: {
-            loan_id: order.loan_id,
-            user_id: loanAccount.user_id,
-            paid_amount: periodPaidAmount,
-            paid_at: new Date(),
-            payment_method: order.payment_method,
-            actual_collector_id: actualCollectorIdForManual,
-            remark: '客户还款',
-            order_id: orderId,
-            collected_by_type: 'manual',
-            paid_capital: paidCapital,
-            paid_interest: paidInterest,
-            paid_fines: paidFines > 0 ? paidFines : null,
-            repayment_schedule_id: schedule.id,
-          },
-        });
       }
-
+      // 5. 创建还款记录
+      if (!order.payee_id) {
+        throw new BadRequestException('订单未关联收款人');
+      }
+      await tx.repaymentRecord.create({
+        data: {
+          loan_id: order.loan_id,
+          user_id: loanAccount.user_id,
+          paid_amount: Math.floor(totalPaidAmount),
+          paid_amount_decimal: Number(order.actual_paid_amount),
+          paid_at: new Date(),
+          payment_method: order.payment_method,
+          actual_collector_id: actualCollectorIdForManual,
+          remark: '客户还款',
+          order_id: orderId,
+          collected_by_type: 'manual',
+          paid_capital: totalPaidCapital,
+          paid_interest: totalPaidInterest,
+          paid_fines: data.fines > 0 ? data.fines : null,
+          repayment_schedule_id: schedules[data.periodCount - 1].id,
+        },
+      });
+      // 更新每日收款统计
+      if (order.payee_id) {
+        await this.payeeDailyStatisticsService.updateDailyStatistics(
+          order.payee_id,
+          totalPaidAmount,
+        );
+      }
       // 6. 更新 LoanAccount
       const currentRepaidPeriods = await tx.repaymentSchedule.count({
         where: {

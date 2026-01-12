@@ -180,6 +180,7 @@ export class EventsService {
             review_status: 'pending_review',
           } as any,
         });
+
         // 减少剩余额度
         await tx.payee.update({
           where: { id: payeeId },

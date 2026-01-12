@@ -5,6 +5,7 @@ export class RepaymentRecordResponseDto {
   loan_id: string;
   user_id: number;
   paid_amount: number;
+  paid_amount_decimal?: number;
   paid_at: Date;
   payment_method: PaymentMethod;
   actual_collector_id?: number;

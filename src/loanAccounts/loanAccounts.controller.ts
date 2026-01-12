@@ -219,6 +219,7 @@ export class LoanAccountsController {
     body: {
       status: LoanAccountStatus;
       settlement_capital?: number;
+      order_id?: string;
       settlement_date?: string;
     },
     @CurrentUser() user: { id: number; role: string },
@@ -232,7 +233,8 @@ export class LoanAccountsController {
         id,
         body.status,
         {
-          settlementCapital: body.settlement_capital,
+          settlementCapital: Number(body.settlement_capital ?? 0),
+          orderId: body.order_id ?? undefined,
           settlementDate: body.settlement_date,
         },
         user.id,

@@ -108,7 +108,7 @@ export class AssetManagementService implements OnModuleInit {
       id: asset?.id || 0,
       admin_id: adminId,
       admin: admin,
-      total_amount: total_amount,
+      remaining_amount: total_amount - reduced_amount,
       reduced_amount,
       created_at: asset?.created_at || null,
       updated_at: asset?.updated_at || null,
@@ -266,7 +266,7 @@ export class AssetManagementService implements OnModuleInit {
           id: asset?.id || 0,
           admin_id: admin.id,
           admin: admin,
-          total_amount: total_amount,
+          remaining_amount: total_amount - reduced_amount,
           reduced_amount,
           created_at: asset?.created_at || null,
           updated_at: asset?.updated_at || null,
@@ -326,8 +326,8 @@ export class AssetManagementService implements OnModuleInit {
       include: { admin: { select: { id: true, username: true } } },
     });
 
-    // 记录历史（每个字段单独记录一条）
-    if (inputHandlingFee > 0) {
+    // 记录历史（每个字段单独记录一条，支持正数和负数）
+    if (inputHandlingFee !== 0) {
       await this.recordAssetReductionHistory(
         adminId,
         'collector',
@@ -340,7 +340,7 @@ export class AssetManagementService implements OnModuleInit {
       );
     }
 
-    if (inputFines > 0) {
+    if (inputFines !== 0) {
       await this.recordAssetReductionHistory(
         adminId,
         'collector',
@@ -360,14 +360,14 @@ export class AssetManagementService implements OnModuleInit {
         reduced_fines: oldReducedFines,
       };
       const newData: any = {};
-      if (inputHandlingFee > 0) {
+      if (inputHandlingFee !== 0) {
         newData.reduced_handling_fee = {
           old_value: oldReducedHandlingFee,
           input_value: inputHandlingFee,
           new_value: newReducedHandlingFee,
         };
       }
-      if (inputFines > 0) {
+      if (inputFines !== 0) {
         newData.reduced_fines = {
           old_value: oldReducedFines,
           input_value: inputFines,
@@ -432,8 +432,8 @@ export class AssetManagementService implements OnModuleInit {
       include: { admin: { select: { id: true, username: true } } },
     });
 
-    // 记录历史
-    if (inputAmount > 0) {
+    // 记录历史（支持正数和负数）
+    if (inputAmount !== 0) {
       await this.recordAssetReductionHistory(
         adminId,
         'risk_controller',

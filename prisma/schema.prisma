@@ -61,7 +61,7 @@ model LoanAccount {
   handling_fee             Decimal             @db.Decimal(10, 2)
   total_periods            Int
   repaid_periods           Int                 @default(0)
-  daily_repayment          Decimal             @db.Decimal(10, 2)
+  daily_repayment          Int                 @default(0)
   company_cost             Int                 @default(0)
   created_at               DateTime            @default(now())
   created_by               Int
@@ -71,14 +71,14 @@ model LoanAccount {
   risk_controller_id       Int
   apply_times              Int                 @default(0)
   paid_capital             Decimal             @default(0.00) @db.Decimal(10, 2)
-  total_fines              Decimal             @default(0.00) @db.Decimal(10, 2)
   status_changed_at        DateTime?
+  total_fines              Decimal             @default(0.00) @db.Decimal(10, 2)
   paid_interest            Decimal             @default(0.00) @db.Decimal(10, 2)
-  note                     String?             @db.VarChar(300)
+  early_settlement_capital Decimal?            @db.Decimal(10, 2)
   last_edit_fines          Decimal?            @db.Decimal(10, 2)
   last_edit_pay_capital    Decimal?            @db.Decimal(10, 2)
   last_edit_pay_interest   Decimal?            @db.Decimal(10, 2)
-  early_settlement_capital Decimal?            @db.Decimal(10, 2)
+  note                     String?             @db.VarChar(300)
   overdue_count            Int                 @default(0)
   ownership                String?             @db.VarChar(2)
   loanAccountRoles         LoanAccountRole[]
@@ -88,6 +88,7 @@ model LoanAccount {
   user                     User                @relation(fields: [user_id], references: [id], onDelete: Cascade)
   repaymentRecords         RepaymentRecord[]
   repaymentSchedules       RepaymentSchedule[]
+  dailyRandomDecimals      DailyRandomDecimal[]
 
   @@index([collector_id], map: "loan_accounts_collector_id_fkey")
   @@index([lender_id], map: "loan_accounts_lender_id_fkey")
@@ -139,11 +140,12 @@ model RepaymentRecord {
   id                    Int                @id @default(autoincrement())
   loan_id               String
   user_id               Int
-  paid_amount           Decimal?           @db.Decimal(10, 2)
+  paid_amount           Int?
+  paid_amount_decimal   Decimal?           @db.Decimal(10, 2)
   paid_at               DateTime           @default(now())
   payment_method        PaymentMethod      @default(wechat_pay)
   remark                String?            @db.VarChar(255)
-  order_id              String
+  order_id              String?
   collected_by_type     CollectionSource   @default(grabbed)
   paid_capital          Decimal?           @db.Decimal(10, 2)
   paid_fines            Decimal?           @db.Decimal(10, 2)
@@ -152,7 +154,7 @@ model RepaymentRecord {
   actual_collector_id   Int?
   actual_collector      Admin?             @relation(fields: [actual_collector_id], references: [id])
   loan_account          LoanAccount        @relation(fields: [loan_id], references: [id])
-  order                 Order              @relation(fields: [order_id], references: [id])
+  order                 Order?             @relation(fields: [order_id], references: [id])
   repayment_schedule    RepaymentSchedule? @relation(fields: [repayment_schedule_id], references: [id])
   user                  User               @relation(fields: [user_id], references: [id])
 
@@ -190,7 +192,7 @@ model Payee {
   createdAt       DateTime               @default(now())
   updatedAt       DateTime?              @updatedAt
   remaining_limit Int                    @default(20000)
-  is_disabled     Boolean                @default(false)
+  is_disabled     Boolean
   orders          Order[]
   dailyStatistics PayeeDailyStatistics[]
   ranking         PayeeRanking?
@@ -229,14 +231,13 @@ model Order {
   updated_at               DateTime?              @updatedAt
   expires_at               DateTime
   collected_by_type        CollectionSource       @default(grabbed)
-  processed_by_admin_id    Int?
-  processed_by_admin_name  String?                @db.VarChar(50)
   actual_paid_amount       Decimal?               @db.Decimal(10, 2)
   grabbed_at               DateTime?
   manual_processing_status ManualProcessingStatus @default(unprocessed)
   needs_manual_processing  Boolean                @default(false)
   payment_feedback         PaymentFeedback        @default(no_feedback)
   review_status            ReviewStatus           @default(pending_review)
+  
   customer                 User                   @relation(fields: [customer_id], references: [id])
   payee                    Payee?                 @relation(fields: [payee_id], references: [id])
   repaymentRecords         RepaymentRecord[]
@@ -462,4 +463,20 @@ enum OperationType {
   CREATE
   UPDATE
   DELETE
+}
+
+model DailyRandomDecimal {
+  id                Int      @id @default(autoincrement())
+  loan_id           String
+  period            Int
+  date              DateTime @db.Date
+  decimal           Int      // 1-99
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+  loan_account      LoanAccount @relation(fields: [loan_id], references: [id], onDelete: Cascade)
+
+  @@unique([loan_id, period, date])
+  @@index([loan_id, period, date])
+  @@index([date])
+  @@map("daily_random_decimals")
 }

@@ -127,6 +127,7 @@ export class MobileTerminalService {
         username: true,
         address: true,
         remaining_limit: true,
+        is_disabled: true,
       },
       orderBy: {
         id: 'asc',
@@ -170,6 +171,7 @@ export class MobileTerminalService {
           today_collection: todayStats.daily_total,
           monthly_collection: monthlyCollection,
           remaining_limit: this.toNumber(payee.remaining_limit),
+          is_disabled: payee.is_disabled,
         };
       }),
     );

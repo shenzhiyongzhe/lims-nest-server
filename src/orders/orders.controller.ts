@@ -45,33 +45,6 @@ export class OrdersController {
     return ResponseHelper.success(rows, '获取订单成功');
   }
 
-  @Post()
-  @UseGuards(AuthGuard, RolesGuard)
-  @Roles(ManagementRoles.PAYEE)
-  async create(
-    @CurrentUser() user: { id: number },
-    @Body()
-    body: CreateOrderDto,
-  ): Promise<ApiResponseDto> {
-    const created = await this.ordersService.createOrder(user.id, body);
-    return ResponseHelper.success(created, '创建订单成功');
-  }
-
-  @Put()
-  @UseGuards(AuthGuard, RolesGuard)
-  @Roles(ManagementRoles.PAYEE)
-  async update(
-    @CurrentUser() user: { id: number },
-    @Body() body: { id: string; status: OrderStatus },
-  ): Promise<ApiResponseDto> {
-    const updated = await this.ordersService.updateStatus(
-      user.id,
-      body.id,
-      body.status,
-    );
-    return ResponseHelper.success(updated, '更新订单成功');
-  }
-
   @Put('payment-feedback')
   async updatePaymentFeedback(
     @Body() body: { id: string; payment_feedback: PaymentFeedback },
@@ -104,28 +77,6 @@ export class OrdersController {
       body.status,
     );
     return ResponseHelper.success(updated, '更新审核状态成功');
-  }
-
-  @Post('partial-payment')
-  @UseGuards(AuthGuard, RolesGuard)
-  async partialPayment(
-    @CurrentUser() user: { id: number },
-    @Body() body: { id: string; paid_amount: number },
-  ): Promise<ApiResponseDto> {
-    if (!body.id || !body.paid_amount) {
-      return ResponseHelper.error('缺少必要参数', 400);
-    }
-
-    if (body.paid_amount <= 0) {
-      return ResponseHelper.error('支付金额必须大于0', 400);
-    }
-
-    const updated = await this.ordersService.partialPayment(
-      user.id,
-      body.id,
-      body.paid_amount,
-    );
-    return ResponseHelper.success(updated, '部分还清成功');
   }
 
   @Get('review')

@@ -35,6 +35,7 @@ export class AdminService {
             payment_limit: paymentLimit,
             remaining_limit: paymentLimit, // 初始化剩余额度等于总额度
             qrcode_number: 3,
+            is_disabled: false,
           },
         });
       }

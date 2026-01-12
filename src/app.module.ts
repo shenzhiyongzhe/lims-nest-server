@@ -23,6 +23,7 @@ import { AssetManagementModule } from './asset-management/asset-management.modul
 import { LoanPredictionModule } from './loan-prediction/loan-prediction.module';
 import { BackupModule } from './backup/backup.module';
 import { MobileTerminalModule } from './mobile-terminal/mobile-terminal.module';
+import { RandomDecimalModule } from './random-decimal/random-decimal.module';
 @Module({
   imports: [
     ScheduleModule.forRoot(),
@@ -49,6 +50,7 @@ import { MobileTerminalModule } from './mobile-terminal/mobile-terminal.module';
     LoanPredictionModule,
     BackupModule,
     MobileTerminalModule,
+    RandomDecimalModule,
   ],
   controllers: [AppController],
   providers: [AppService],

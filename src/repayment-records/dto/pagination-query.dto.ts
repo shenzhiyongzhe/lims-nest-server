@@ -35,10 +35,6 @@ export class PaginationQueryDto {
   endDate?: string;
 
   @IsOptional()
-  @IsString()
-  collector?: string;
-
-  @IsOptional()
   @Type(() => Number)
   @IsNumber()
   riskControllerId?: number; // 负责人筛选风控人时使用

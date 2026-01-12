@@ -13,7 +13,6 @@ export class RepaymentRecordsService {
     userId: number,
     adminId: number,
   ): Promise<RepaymentRecord[]> {
-    // 获取管理员信息
     const admin = await this.prisma.admin.findUnique({
       where: { id: adminId },
       select: { id: true, role: true, username: true },
@@ -24,17 +23,18 @@ export class RepaymentRecordsService {
     }
 
     let where: any = { user_id: userId };
-
-    // 根据管理员角色过滤数据
-    if (admin.role === 'COLLECTOR') {
-      // 收款人只能看到自己负责的贷款的还款记录
-      const loanAccounts = await this.prisma.loanAccount.findMany({
-        where: { collector_id: admin.id },
-        select: { id: true },
-      });
-      const loanIds = loanAccounts.map((la) => la.id);
-      where.loan_id = { in: loanIds };
+    if (admin.role === 'RISK_CONTROLLER') {
+      where.risk_controller_id = admin.id;
+    } else if (admin.role === 'COLLECTOR') {
+      where.collector_id = admin.id;
     }
+
+    const loanAccounts = await this.prisma.loanAccount.findMany({
+      where: where,
+      select: { id: true },
+    });
+    const loanIds = loanAccounts.map((la) => la.id);
+    where.loan_id = { in: loanIds };
 
     return this.prisma.repaymentRecord.findMany({
       where,
@@ -92,37 +92,6 @@ export class RepaymentRecordsService {
     });
   }
 
-  async findAll(params?: {
-    userId?: number;
-    loanId?: string;
-    payeeId?: number;
-    startDate?: Date;
-    endDate?: Date;
-  }): Promise<RepaymentRecord[]> {
-    const where: any = {};
-
-    if (params?.userId) where.user_id = params.userId;
-    if (params?.loanId) where.loan_id = params.loanId;
-    if (params?.payeeId) where.actual_collector_id = params.payeeId;
-
-    if (params?.startDate || params?.endDate) {
-      where.paid_at = {};
-      if (params.startDate) where.paid_at.gte = params.startDate;
-      if (params.endDate) where.paid_at.lt = params.endDate;
-    }
-
-    return this.prisma.repaymentRecord.findMany({
-      where,
-      include: {
-        user: true,
-        actual_collector: true,
-        order: true,
-        loan_account: true,
-      },
-      orderBy: { paid_at: 'desc' },
-    });
-  }
-
   async findAllWithPagination(
     query: PaginationQueryDto,
     adminId: number,
@@ -135,7 +104,6 @@ export class RepaymentRecordsService {
       payeeId,
       startDate,
       endDate,
-      collector,
       riskControllerId,
       collectorId,
     } = query;
@@ -152,83 +120,32 @@ export class RepaymentRecordsService {
     }
 
     let where: any = {};
+    let loanAccountWhere: any = {};
     // 根据管理员角色过滤数据
     if (admin.role === 'RISK_CONTROLLER') {
       // 风控人只能看到自己负责的贷款的还款记录
-      let loanAccounts = await this.prisma.loanAccount.findMany({
-        where: { risk_controller_id: admin.id },
-        select: { id: true },
-      });
+      loanAccountWhere.risk_controller_id = admin.id;
 
       // 如果提供了 collectorId，只显示与该负责人共同关联的贷款
       if (collectorId) {
-        const collectorLoanAccounts = await this.prisma.loanAccount.findMany({
-          where: { collector_id: collectorId },
-          select: { id: true },
-        });
-        const collectorLoanIds = collectorLoanAccounts.map((la) => la.id);
-        loanAccounts = loanAccounts.filter((la) =>
-          collectorLoanIds.includes(la.id),
-        );
+        loanAccountWhere.collector_id = collectorId;
       }
-
-      const loanIds = loanAccounts.map((la) => la.id);
-
-      if (loanIds.length === 0) {
-        return {
-          data: [],
-          pagination: {
-            page,
-            pageSize,
-            total: 0,
-            totalPages: 0,
-            hasNext: false,
-            hasPrev: false,
-          },
-        };
-      }
-
-      where.loan_id = { in: loanIds };
     } else if (admin.role === 'COLLECTOR') {
       // 负责人只能查看自己负责的贷款的还款记录
-      let loanAccounts = await this.prisma.loanAccount.findMany({
-        where: { collector_id: admin.id },
-        select: { id: true },
-      });
+      loanAccountWhere.collector_id = admin.id;
 
       // 如果提供了 riskControllerId，只显示与该风控人共同关联的贷款
       if (riskControllerId) {
-        const riskControllerLoanAccounts =
-          await this.prisma.loanAccount.findMany({
-            where: { risk_controller_id: riskControllerId },
-            select: { id: true },
-          });
-        const riskControllerLoanIds = riskControllerLoanAccounts.map(
-          (la) => la.id,
-        );
-        loanAccounts = loanAccounts.filter((la) =>
-          riskControllerLoanIds.includes(la.id),
-        );
+        loanAccountWhere.risk_controller_id = riskControllerId;
       }
-
-      const loanIds = loanAccounts.map((la) => la.id);
-
-      if (loanIds.length === 0) {
-        return {
-          data: [],
-          pagination: {
-            page,
-            pageSize,
-            total: 0,
-            totalPages: 0,
-            hasNext: false,
-            hasPrev: false,
-          },
-        };
-      }
-
-      where.loan_id = { in: loanIds };
     }
+
+    let loanAccount = await this.prisma.loanAccount.findMany({
+      where: loanAccountWhere,
+      select: { id: true },
+    });
+    let loanIds = loanAccount.map((la) => la.id);
+    where.loan_id = { in: loanIds };
 
     if (userId) where.user_id = userId;
     if (loanId) where.loan_id = loanId;
@@ -277,6 +194,9 @@ export class RepaymentRecordsService {
       loan_id: record.loan_id,
       user_id: record.user_id,
       paid_amount: Number(record.paid_amount || 0),
+      paid_amount_decimal: record.paid_amount_decimal
+        ? Number(record.paid_amount_decimal)
+        : undefined,
       paid_at: record.paid_at,
       payment_method: record.payment_method,
       actual_collector_id: record.actual_collector_id || undefined,

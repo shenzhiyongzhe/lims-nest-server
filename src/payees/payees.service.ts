@@ -28,6 +28,7 @@ export class PayeesService {
       payment_limit: paymentLimit,
       remaining_limit: paymentLimit, // 初始化剩余额度等于总额度
       qrcode_number: (data as any).qrcode_number ?? 3,
+      is_disabled: false,
     };
     return this.prisma.payee.create({ data: payload });
   }

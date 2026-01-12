@@ -854,7 +854,120 @@ export class LoanAccountsService {
       );
     }
 
-    // 根据 status 自定义排序：pending 在前，其次 settled，最后是 negotiated 和 blacklist
+    // 获取当天和明天的日期（用于查询还款计划和排序）
+    // 使用 UTC 时间避免时区问题
+    const now = new Date();
+    const today = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+    );
+    const tomorrow = new Date(today);
+    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+    const dayAfterTomorrow = new Date(tomorrow);
+    dayAfterTomorrow.setUTCDate(dayAfterTomorrow.getUTCDate() + 1);
+
+    // 批量查询所有贷款的当天和明天的还款计划（用于排序）
+    const allLoanIds = loans.map((loan) => loan.id);
+    const todayTomorrowSchedules = await this.prisma.repaymentSchedule.findMany(
+      {
+        where: {
+          loan_id: { in: allLoanIds },
+          due_start_date: {
+            gte: today,
+            lt: dayAfterTomorrow,
+          },
+        },
+        select: {
+          loan_id: true,
+          due_start_date: true,
+          status: true,
+        },
+      },
+    );
+
+    // 按 loan_id 分组，判断当天和明天是否有已还清的计划
+    const scheduleMap = new Map<
+      string,
+      {
+        todayPaid: boolean;
+        tomorrowPaid: boolean;
+        hasToday: boolean;
+        hasTomorrow: boolean;
+      }
+    >();
+
+    allLoanIds.forEach((loanId) => {
+      scheduleMap.set(loanId, {
+        todayPaid: false,
+        tomorrowPaid: false,
+        hasToday: false,
+        hasTomorrow: false,
+      });
+    });
+
+    // 将 today 和 tomorrow 转换为日期字符串用于比较
+    const todayStr = today.toISOString().split('T')[0]; // YYYY-MM-DD
+    const tomorrowStr = tomorrow.toISOString().split('T')[0]; // YYYY-MM-DD
+
+    todayTomorrowSchedules.forEach((schedule) => {
+      // schedule.due_start_date 是 Date 类型，转换为日期字符串进行比较
+      // 使用 UTC 方法确保时区一致性
+      const scheduleDate = new Date(schedule.due_start_date);
+      const scheduleYear = scheduleDate.getUTCFullYear();
+      const scheduleMonth = String(scheduleDate.getUTCMonth() + 1).padStart(
+        2,
+        '0',
+      );
+      const scheduleDay = String(scheduleDate.getUTCDate()).padStart(2, '0');
+      const scheduleDateStr = `${scheduleYear}-${scheduleMonth}-${scheduleDay}`;
+
+      // 使用日期字符串比较（更可靠）
+      const isToday = scheduleDateStr === todayStr;
+      const isTomorrow = scheduleDateStr === tomorrowStr;
+      const isPaid = schedule.status === 'paid';
+
+      const current = scheduleMap.get(schedule.loan_id) || {
+        todayPaid: false,
+        tomorrowPaid: false,
+        hasToday: false,
+        hasTomorrow: false,
+      };
+
+      if (isToday) {
+        current.hasToday = true;
+        if (isPaid) {
+          current.todayPaid = true;
+        }
+      }
+      if (isTomorrow) {
+        current.hasTomorrow = true;
+        if (isPaid) {
+          current.tomorrowPaid = true;
+        }
+      }
+
+      scheduleMap.set(schedule.loan_id, current);
+    });
+
+    // 调试：打印 scheduleMap 的内容（仅在开发环境）
+    if (process.env.NODE_ENV === 'development') {
+      console.log('ScheduleMap 统计:', {
+        totalLoans: allLoanIds.length,
+        totalSchedules: todayTomorrowSchedules.length,
+        todayCount: Array.from(scheduleMap.values()).filter((v) => v.hasToday)
+          .length,
+        tomorrowCount: Array.from(scheduleMap.values()).filter(
+          (v) => v.hasTomorrow,
+        ).length,
+        todayPaidCount: Array.from(scheduleMap.values()).filter(
+          (v) => v.hasToday && v.todayPaid,
+        ).length,
+        todayUnpaidCount: Array.from(scheduleMap.values()).filter(
+          (v) => v.hasToday && !v.todayPaid,
+        ).length,
+      });
+    }
+
+    // 根据 status 和还款状态自定义排序
     const getStatusOrder = (status: LoanAccountStatus): number => {
       if (status === 'pending') return 1;
       if (status === 'settled') return 2;
@@ -863,13 +976,52 @@ export class LoanAccountsService {
       return 5; // 其他状态排在最后
     };
 
+    // 获取还款状态排序优先级
+    // 1. 今天未还的（有今天的还款计划且未还）
+    // 2. 今天已还的（有今天的还款计划且已还）
+    // 3. 明天未还的（有明天的还款计划且未还）
+    // 4. 明天已还的（有明天的还款计划且已还）
+    // 5. 其他（没有今天或明天的还款计划）
+    const getPaymentStatusOrder = (loanId: string): number => {
+      const scheduleInfo = scheduleMap.get(loanId) || {
+        todayPaid: false,
+        tomorrowPaid: false,
+        hasToday: false,
+        hasTomorrow: false,
+      };
+
+      // 优先处理今天的还款计划
+      if (scheduleInfo.hasToday) {
+        // 有今天的还款计划：未还=1（排前面），已还=2
+        return scheduleInfo.todayPaid ? 2 : 1;
+      }
+
+      // 其次处理明天的还款计划
+      if (scheduleInfo.hasTomorrow) {
+        // 有明天的还款计划：未还=3，已还=4
+        return scheduleInfo.tomorrowPaid ? 4 : 3;
+      }
+
+      // 没有今天或明天的还款计划
+      return 5;
+    };
+
     const sortedLoans = loans.sort((a, b) => {
+      // 第一优先级：按 status 排序
       const orderA = getStatusOrder(a.status);
       const orderB = getStatusOrder(b.status);
       if (orderA !== orderB) {
         return orderA - orderB;
       }
-      // 如果 status 顺序相同，按 apply_times 排序
+
+      // 第二优先级：按还款状态排序（今天/明天是否已还）
+      const paymentOrderA = getPaymentStatusOrder(a.id);
+      const paymentOrderB = getPaymentStatusOrder(b.id);
+      if (paymentOrderA !== paymentOrderB) {
+        return paymentOrderA - paymentOrderB;
+      }
+
+      // 第三优先级：如果 status 和还款状态都相同，按 apply_times 排序
       return a.apply_times - b.apply_times;
     });
 
@@ -968,81 +1120,13 @@ export class LoanAccountsService {
       paginatedLoans = sortedLoans.slice(startIndex, endIndex);
     }
 
-    // 获取当天和明天的日期（用于查询还款计划）
-    // 使用 UTC 时间避免时区问题
-    const now = new Date();
-    const today = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
-    );
-    const tomorrow = new Date(today);
-    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-    const dayAfterTomorrow = new Date(tomorrow);
-    dayAfterTomorrow.setUTCDate(dayAfterTomorrow.getUTCDate() + 1);
-
-    // 批量查询当天和明天的还款计划
-    const loanIds = paginatedLoans.map((loan) => loan.id);
-    const todayTomorrowSchedules = await this.prisma.repaymentSchedule.findMany(
-      {
-        where: {
-          loan_id: { in: loanIds },
-          due_start_date: {
-            gte: today,
-            lt: dayAfterTomorrow,
-          },
-        },
-        select: {
-          loan_id: true,
-          due_start_date: true,
-          status: true,
-        },
-      },
-    );
-
-    // 按 loan_id 分组，判断当天和明天是否有已还清的计划
-    const scheduleMap = new Map<
-      string,
-      { todayPaid: boolean; tomorrowPaid: boolean }
-    >();
-
-    loanIds.forEach((loanId) => {
-      scheduleMap.set(loanId, { todayPaid: false, tomorrowPaid: false });
-    });
-
-    todayTomorrowSchedules.forEach((schedule) => {
-      // 将日期转换为 UTC 日期进行比较
-      const scheduleDate = new Date(schedule.due_start_date);
-      const scheduleUTCDate = new Date(
-        Date.UTC(
-          scheduleDate.getUTCFullYear(),
-          scheduleDate.getUTCMonth(),
-          scheduleDate.getUTCDate(),
-        ),
-      );
-
-      const isToday = scheduleUTCDate.getTime() === today.getTime();
-      const isTomorrow = scheduleUTCDate.getTime() === tomorrow.getTime();
-      const isPaid = schedule.status === 'paid';
-
-      const current = scheduleMap.get(schedule.loan_id) || {
-        todayPaid: false,
-        tomorrowPaid: false,
-      };
-
-      if (isToday && isPaid) {
-        current.todayPaid = true;
-      }
-      if (isTomorrow && isPaid) {
-        current.tomorrowPaid = true;
-      }
-
-      scheduleMap.set(schedule.loan_id, current);
-    });
-
     // 为每个 loan 添加 today_paid 和 tomorrow_paid 字段
     const processedLoans = paginatedLoans.map((loan) => {
       const scheduleInfo = scheduleMap.get(loan.id) || {
         todayPaid: false,
         tomorrowPaid: false,
+        hasToday: false,
+        hasTomorrow: false,
       };
       return {
         ...loan,
@@ -1379,6 +1463,7 @@ export class LoanAccountsService {
     newStatus: LoanAccountStatus,
     options?: {
       settlementCapital?: number;
+      orderId?: string;
       settlementDate?: string;
     },
     userId?: number | null,
@@ -1425,6 +1510,19 @@ export class LoanAccountsService {
           );
         }
 
+        let order;
+        if (options?.orderId) {
+          order = await tx.order.findUnique({
+            where: { id: options.orderId },
+          });
+          await tx.order.update({
+            where: { id: options.orderId },
+            data: {
+              manual_processing_status: 'processed',
+              needs_manual_processing: false,
+            },
+          });
+        }
         // 获取所有关联的还款计划
         const schedules = await tx.repaymentSchedule.findMany({
           where: { loan_id: id },
@@ -1523,92 +1621,39 @@ export class LoanAccountsService {
             },
           });
 
-          let orderId: string;
-
           if (existingRecord) {
-            // 如果记录已存在，更新订单和还款记录
-            const newOrder = await tx.order.create({
-              data: {
-                customer_id: la!.user_id,
-                loan_id: id,
-                amount: settlementAmount,
-                payment_periods: 1,
-                payment_method: PaymentMethod.wechat_pay,
-                remark: '来源：提前结清',
-                status: OrderStatus.completed,
-                payee_id: payee?.id,
-                expires_at: new Date(),
-              },
-            });
-            orderId = newOrder.id;
-
-            // 获取actual_collector_id：如果有payee，使用payee.admin_id
-            let actualCollectorId: number | null = null;
-            if (payee?.id) {
-              const payeeRecord = await tx.payee.findUnique({
-                where: { id: payee.id },
-                select: { admin_id: true },
-              });
-              if (payeeRecord) {
-                actualCollectorId = payeeRecord.admin_id;
-              }
-            }
-
             // 更新还款记录
             await tx.repaymentRecord.update({
               where: { id: existingRecord.id },
               data: {
                 paid_amount: settlementAmount,
+                paid_amount_decimal:
+                  order?.actual_paid_amount ?? Number(settlementAmount),
                 paid_at: new Date(),
-                actual_collector_id: actualCollectorId,
-                order_id: orderId,
-                // 记录本次结清的本金和利息，便于后续统计
-                paid_capital: hasManualSettlement ? manualCapital : null,
-                paid_fines: null,
+                payment_method: PaymentMethod.wechat_pay,
+                actual_collector_id: order?.actual_collector_id ?? userId,
+                remark: '来源：提前结清',
+                paid_capital: hasManualSettlement
+                  ? Number(manualCapital)
+                  : null,
               },
             });
           } else {
-            // 如果记录不存在，创建新订单和还款记录
-            // 获取actual_collector_id：如果有payee，使用payee.admin_id
-            let actualCollectorId: number | null | undefined;
-            if (payee?.id) {
-              const payeeRecord = await tx.payee.findUnique({
-                where: { id: payee.id },
-                select: { admin_id: true },
-              });
-              if (payeeRecord) {
-                actualCollectorId = payeeRecord.admin_id;
-              }
-            } else {
-              actualCollectorId = userId;
-            }
-            const order = await tx.order.create({
-              data: {
-                customer_id: la!.user_id,
-                loan_id: id,
-                amount: settlementAmount,
-                payment_periods: 1,
-                payment_method: PaymentMethod.wechat_pay,
-                remark: '来源：提前结清',
-                status: OrderStatus.completed,
-                payee_id: payee?.id,
-                expires_at: new Date(),
-              },
-            });
-
             // 创建还款记录
             await tx.repaymentRecord.create({
               data: {
                 loan_id: id,
                 user_id: la!.user_id,
                 paid_amount: settlementAmount,
+                paid_amount_decimal:
+                  order?.actual_paid_amount ?? Number(settlementAmount),
                 paid_at: new Date(),
-                payment_method: 'wechat_pay' as any,
-                actual_collector_id: actualCollectorId,
+                payment_method: PaymentMethod.wechat_pay,
+                actual_collector_id: order?.actual_collector_id ?? userId,
                 remark: '来源：提前结清',
-                order_id: order.id,
-                paid_capital: hasManualSettlement ? manualCapital : null,
-                paid_fines: null,
+                paid_capital: hasManualSettlement
+                  ? Number(manualCapital)
+                  : null,
               },
             });
           }

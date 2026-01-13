@@ -25,10 +25,49 @@
 
 [Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
 
+## Environment Variables
+
+### Email Configuration (QQ邮箱SMTP)
+
+在 `.env` 文件中添加以下配置以启用邮件发送功能：
+
+```env
+# QQ邮箱SMTP配置
+SMTP_HOST=smtp.qq.com
+SMTP_PORT=587
+SMTP_USER=your_qq_email@qq.com
+SMTP_PASS=your_authorization_code
+SMTP_FROM=your_qq_email@qq.com
+```
+
+**获取QQ邮箱授权码步骤：**
+
+1. 登录QQ邮箱
+2. 进入"设置" -> "账户"
+3. 找到"POP3/IMAP/SMTP/Exchange/CardDAV/CalDAV服务"
+4. 开启"POP3/SMTP服务"或"IMAP/SMTP服务"
+5. 按照提示发送短信验证
+6. 获取授权码（16位字符），填入 `SMTP_PASS`
+
+**注意：**
+
+- `SMTP_USER` 和 `SMTP_FROM` 应填写相同的QQ邮箱地址
+- `SMTP_PASS` 是授权码，不是QQ密码
+- 如果未配置邮件相关环境变量，邮件发送功能将被跳过，不会影响系统正常运行
+
 ## Project setup
 
 ```bash
 $ npm install
+```
+
+### 安装邮件服务依赖
+
+如果使用邮件发送功能，需要安装 nodemailer：
+
+```bash
+$ npm install nodemailer
+$ npm install --save-dev @types/nodemailer
 ```
 
 ## Compile and run the project

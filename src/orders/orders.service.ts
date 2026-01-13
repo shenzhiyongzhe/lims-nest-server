@@ -10,6 +10,7 @@ import type { Prisma } from '@prisma/client';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { PayeeRankingService } from '../payee-ranking/payee-ranking.service';
 import { PayeeDailyStatisticsService } from '../payee-daily-statistics/payee-daily-statistics.service';
+import { EmailService } from '../email/email.service';
 import * as crypto from 'crypto';
 
 type LoanAccountStatus = 'pending' | 'settled';
@@ -26,6 +27,7 @@ export class OrdersService {
     private readonly prisma: PrismaService,
     private readonly payeeRankingService: PayeeRankingService,
     private readonly payeeDailyStatisticsService: PayeeDailyStatisticsService,
+    private readonly emailService: EmailService,
   ) {}
 
   private async getAdminRole(adminId: number): Promise<string> {
@@ -370,7 +372,25 @@ export class OrdersService {
       throw new BadRequestException('缺少必要参数');
     }
 
-    const order = await this.prisma.order.findUnique({ where: { id } });
+    const order = await this.prisma.order.findUnique({
+      where: { id },
+      include: {
+        payee: {
+          include: {
+            admin: {
+              select: {
+                email: true,
+              },
+            },
+          },
+        },
+        customer: {
+          select: {
+            username: true,
+          },
+        },
+      },
+    });
     if (!order) {
       throw new NotFoundException('订单不存在');
     }
@@ -390,6 +410,23 @@ export class OrdersService {
       where: { id },
       data: updateData,
     });
+
+    // 如果支付反馈为成功，发送邮件给收款人
+    if (paymentFeedback === 'success' && order.payee?.admin?.email) {
+      const customerName = order.customer?.username || '未知客户';
+      const paymentAmount = Number(order.amount);
+      this.emailService
+        .sendPaymentSuccessEmail(
+          order.payee.admin.email,
+          customerName,
+          paymentAmount,
+          order.id,
+        )
+        .catch((error) => {
+          // 邮件发送失败不影响主流程，只记录日志
+          console.error('发送支付成功邮件失败:', error);
+        });
+    }
 
     return updated;
   }
@@ -496,6 +533,11 @@ export class OrdersService {
       where: { id: orderId },
       include: {
         payee: true,
+        customer: {
+          select: {
+            username: true,
+          },
+        },
       },
     });
 
@@ -625,6 +667,35 @@ export class OrdersService {
             order.payee_id,
             actualPaidAmountInt,
           );
+        }
+
+        // 6. 发送手动处理通知邮件给负责人
+        // 在事务外发送邮件，避免影响事务
+        const loanAccount = await this.prisma.loanAccount.findUnique({
+          where: { id: order.loan_id },
+          include: {
+            collector: {
+              select: {
+                email: true,
+              },
+            },
+          },
+        });
+
+        if (loanAccount?.collector?.email) {
+          const customerName = order.customer?.username || '未知客户';
+          this.emailService
+            .sendManualProcessingEmail(
+              loanAccount.collector.email,
+              orderId,
+              customerName,
+              order.loan_id,
+              actualPaidAmount,
+            )
+            .catch((error) => {
+              // 邮件发送失败不影响主流程，只记录日志
+              console.error('发送手动处理通知邮件失败:', error);
+            });
         }
 
         return updatedOrder;

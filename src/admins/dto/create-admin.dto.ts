@@ -1,4 +1,10 @@
-import { IsOptional, IsString, Length, Matches } from 'class-validator';
+import {
+  IsEmail,
+  IsOptional,
+  IsString,
+  Length,
+  Matches,
+} from 'class-validator';
 
 export class CreateAdminDto {
   @IsString()
@@ -13,4 +19,9 @@ export class CreateAdminDto {
   @IsString()
   @Length(1, 16)
   role: string;
+
+  @IsString()
+  @IsEmail()
+  @IsOptional()
+  email?: string;
 }

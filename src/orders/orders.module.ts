@@ -4,9 +4,15 @@ import { OrdersService } from './orders.service';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { PayeeRankingModule } from '../payee-ranking/payee-ranking.module';
 import { PayeeDailyStatisticsModule } from '../payee-daily-statistics/payee-daily-statistics.module';
+import { EmailModule } from '../email/email.module';
 
 @Module({
-  imports: [PrismaModule, PayeeRankingModule, PayeeDailyStatisticsModule],
+  imports: [
+    PrismaModule,
+    PayeeRankingModule,
+    PayeeDailyStatisticsModule,
+    EmailModule,
+  ],
   controllers: [OrdersController],
   providers: [OrdersService],
 })

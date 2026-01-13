@@ -30,6 +30,7 @@ model Admin {
   id                            Int                            @id @default(autoincrement())
   username                      String                         @db.VarChar(10)
   password                      String                         @default("123456") @db.VarChar(32)
+  email                         String?                        @db.VarChar(100)
   role                          ManagementRoles
   createdAt                     DateTime                       @default(now())
   updatedAt                     DateTime?                      @updatedAt

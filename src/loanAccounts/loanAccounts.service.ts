@@ -565,208 +565,175 @@ export class LoanAccountsService {
     };
   }
 
-  async findGroupedByUser(
-    status?: LoanAccountStatus[],
-    adminId?: number,
-    page?: number,
-    pageSize?: number,
-    filterAdminId?: number,
-    tableName?: 'loanAccounts' | 'repaymentSchedule',
+  /**
+   * 获取空结果
+   */
+  private getEmptyResult() {
+    return {
+      statistics: {
+        inStock: 0,
+        handlingFee: 0,
+        fines: 0,
+        remainingDebt: 0,
+      },
+      data: [],
+      total: 0,
+      relatedAdmins: [],
+    };
+  }
+
+  /**
+   * 获取管理员权限相关的贷款账户ID列表
+   */
+  private async getAdminLoanAccountIds(adminId: number): Promise<{
+    loanAccountIds: string[];
+    admin: { role: ManagementRoles } | null;
+  }> {
+    const admin = await this.prisma.admin.findUnique({
+      where: { id: adminId },
+      select: { role: true },
+    });
+
+    if (!admin || admin.role === 'ADMIN') {
+      return { loanAccountIds: [], admin };
+    }
+
+    const loanAccountRoles = await this.prisma.loanAccountRole.findMany({
+      where: {
+        admin_id: adminId,
+      },
+      select: {
+        loan_account_id: true,
+      },
+      distinct: ['loan_account_id'],
+    });
+
+    const loanAccountIds = loanAccountRoles.map((role) => role.loan_account_id);
+
+    return { loanAccountIds, admin };
+  }
+
+  /**
+   * 基于 RepaymentSchedule 筛选贷款账户ID
+   */
+  private async filterLoanIdsByRepaymentSchedule(
+    loanAccountIds: string[],
+    queryStatus?: string,
     startDate?: string,
     endDate?: string,
+    dateField?:
+      | 'due_start_date'
+      | 'paid_at'
+      | 'status_changed_at'
+      | 'due_date_range',
+  ): Promise<string[]> {
+    const scheduleWhere: any = {};
+
+    // 权限过滤
+    if (loanAccountIds.length > 0) {
+      scheduleWhere.loan_id = { in: loanAccountIds };
+    }
+
+    // 状态筛选
+    if (queryStatus) {
+      scheduleWhere.status = queryStatus;
+    }
+
+    // 日期筛选
+    if (startDate && endDate && dateField) {
+      const startDateObj = new Date(startDate);
+      const endDateObj = new Date(endDate);
+
+      if (dateField === 'paid_at') {
+        scheduleWhere.due_start_date = {
+          gte: startDateObj,
+          lte: endDateObj,
+        };
+      } else if (dateField === 'due_start_date') {
+        scheduleWhere.due_start_date = {
+          gte: startDateObj,
+          lt: endDateObj,
+        };
+      }
+    } else if (startDate && dateField === 'due_start_date') {
+      const startDateObj = new Date(startDate);
+      const endDateObj = endDate ? new Date(endDate) : new Date();
+      scheduleWhere.due_start_date = {
+        gte: startDateObj,
+        lt: endDateObj,
+      };
+    }
+
+    // 查询 RepaymentSchedule
+    const schedules = await this.prisma.repaymentSchedule.findMany({
+      where: scheduleWhere,
+      select: { loan_id: true },
+      distinct: ['loan_id'],
+    });
+
+    const scheduleLoanIds = schedules.map((s) => s.loan_id);
+
+    if (scheduleLoanIds.length === 0) {
+      return [];
+    }
+
+    // 如果已有权限过滤，取交集；否则使用筛选结果
+    return loanAccountIds.length > 0
+      ? loanAccountIds.filter((id) => scheduleLoanIds.includes(id))
+      : scheduleLoanIds;
+  }
+
+  /**
+   * 根据归属人筛选贷款账户ID
+   */
+  private async filterLoanIdsByAdmin(
+    loanAccountIds: string[],
+    filterAdminId: number,
+  ): Promise<string[]> {
+    const filterRoles = await this.prisma.loanAccountRole.findMany({
+      where: {
+        admin_id: filterAdminId,
+        role_type: {
+          in: ['collector', 'risk_controller'],
+        },
+      },
+      select: {
+        loan_account_id: true,
+      },
+      distinct: ['loan_account_id'],
+    });
+
+    const filterLoanAccountIds = filterRoles.map(
+      (role) => role.loan_account_id,
+    );
+
+    if (filterLoanAccountIds.length === 0) {
+      return [];
+    }
+
+    // 如果已有权限过滤，取交集；否则使用筛选结果
+    return loanAccountIds.length > 0
+      ? loanAccountIds.filter((id) => filterLoanAccountIds.includes(id))
+      : filterLoanAccountIds;
+  }
+
+  /**
+   * 构建 LoanAccount 查询条件
+   */
+  private buildLoanAccountWhere(
+    loanAccountIds: string[],
+    status?: LoanAccountStatus[],
+    tableName?: 'loanAccounts' | 'repaymentSchedule',
     queryStatus?: string,
+    startDate?: string,
+    endDate?: string,
     dateField?:
       | 'due_start_date'
       | 'paid_at'
       | 'status_changed_at'
       | 'due_date_range',
     keyword?: string,
-  ): Promise<{
-    statistics: {
-      inStock: number;
-      handlingFee: number;
-      fines: number;
-      remainingDebt: number;
-    };
-    data: LoanAccount[];
-    total: number;
-    relatedAdmins: Array<{ id: number; username: string; role: string }>;
-  }> {
-    // 获取该admin相关的所有loan_account_ids（权限过滤）
-    let loanAccountIds: string[] = [];
-    let admin: { role: ManagementRoles } | null;
-    if (adminId) {
-      admin = await this.prisma.admin.findUnique({
-        where: { id: adminId },
-        select: { role: true },
-      });
-
-      if (admin && admin.role !== 'ADMIN') {
-        const loanAccountRoles = await this.prisma.loanAccountRole.findMany({
-          where: {
-            admin_id: adminId,
-          },
-          select: {
-            loan_account_id: true,
-          },
-          distinct: ['loan_account_id'],
-        });
-
-        loanAccountIds = loanAccountRoles.map((role) => role.loan_account_id);
-
-        if (loanAccountIds.length === 0) {
-          return {
-            statistics: {
-              inStock: 0,
-              handlingFee: 0,
-              fines: 0,
-              remainingDebt: 0,
-            },
-            data: [],
-            total: 0,
-            relatedAdmins: [],
-          };
-        }
-      }
-    }
-
-    // 参数化查询：处理基于 RepaymentSchedule 的筛选
-    if (tableName === 'repaymentSchedule') {
-      const scheduleWhere: any = {};
-
-      // 权限过滤
-      if (loanAccountIds.length > 0) {
-        scheduleWhere.loan_id = { in: loanAccountIds };
-      }
-
-      // 状态筛选
-      if (queryStatus) {
-        scheduleWhere.status = queryStatus;
-      }
-
-      // 日期筛选
-      if (startDate && endDate && dateField) {
-        // 解析日期字符串
-        // 注意：ISO 字符串会被解析为 UTC 时间，但 Prisma 会将其转换为数据库时区
-        // 为了与统计查询保持一致，我们需要确保日期范围正确
-        const startDateObj = new Date(startDate);
-        const endDateObj = new Date(endDate);
-
-        if (dateField === 'paid_at') {
-          // 对于 paid_at，需要同时检查 due_start_date 和 paid_at
-          scheduleWhere.due_start_date = {
-            gte: startDateObj,
-            lte: endDateObj,
-          };
-        } else if (dateField === 'due_start_date') {
-          // 对于 due_start_date，使用 gte 和 lt（不包含结束日期），与统计查询保持一致
-          // 统计查询使用：gte: dayBeforeYesterdayStart, lt: yesterdayStart
-          scheduleWhere.due_start_date = {
-            gte: startDateObj,
-            lt: endDateObj,
-          };
-        }
-      } else if (startDate && dateField === 'due_start_date') {
-        // 只设置开始日期（用于 yesterdayOverdue 等场景）
-        const startDateObj = new Date(startDate);
-        const endDateObj = endDate ? new Date(endDate) : new Date();
-        scheduleWhere.due_start_date = {
-          gte: startDateObj,
-          lt: endDateObj,
-        };
-      }
-
-      // 查询 RepaymentSchedule
-
-      const schedules = await this.prisma.repaymentSchedule.findMany({
-        where: scheduleWhere,
-        select: { loan_id: true },
-        distinct: ['loan_id'],
-      });
-
-      const scheduleLoanIds = schedules.map((s) => s.loan_id);
-
-      if (scheduleLoanIds.length > 0) {
-        loanAccountIds =
-          loanAccountIds.length > 0
-            ? loanAccountIds.filter((id) => scheduleLoanIds.includes(id))
-            : scheduleLoanIds;
-      } else {
-        // 如果没有匹配的schedule，返回空数组
-        return {
-          statistics: {
-            inStock: 0,
-            handlingFee: 0,
-            fines: 0,
-            remainingDebt: 0,
-          },
-          data: [],
-          total: 0,
-          relatedAdmins: [],
-        };
-      }
-
-      if (loanAccountIds.length === 0) {
-        return {
-          statistics: {
-            inStock: 0,
-            handlingFee: 0,
-            fines: 0,
-            remainingDebt: 0,
-          },
-          data: [],
-          total: 0,
-          relatedAdmins: [],
-        };
-      }
-    }
-
-    // 归属人筛选：如果指定了 filterAdminId，筛选该管理员关联的贷款
-    if (filterAdminId) {
-      const filterRoles = await this.prisma.loanAccountRole.findMany({
-        where: {
-          admin_id: filterAdminId,
-          role_type: {
-            in: ['collector', 'risk_controller'],
-          },
-        },
-        select: {
-          loan_account_id: true,
-        },
-        distinct: ['loan_account_id'],
-      });
-
-      const filterLoanAccountIds = filterRoles.map(
-        (role) => role.loan_account_id,
-      );
-
-      if (filterLoanAccountIds.length > 0) {
-        // 如果已有权限过滤，取交集；否则使用筛选结果
-        if (loanAccountIds.length > 0) {
-          loanAccountIds = loanAccountIds.filter((id) =>
-            filterLoanAccountIds.includes(id),
-          );
-        } else {
-          loanAccountIds = filterLoanAccountIds;
-        }
-      } else {
-        // 如果没有匹配的贷款，返回空结果
-
-        return {
-          statistics: {
-            inStock: 0,
-            handlingFee: 0,
-            fines: 0,
-            remainingDebt: 0,
-          },
-          data: [],
-          total: 0,
-          relatedAdmins: [],
-        };
-      }
-    }
-
-    // 构建基础查询条件
+  ): any {
     const where: any = {};
 
     // 权限过滤
@@ -774,9 +741,7 @@ export class LoanAccountsService {
       where.id = { in: loanAccountIds };
     }
 
-    // 状态过滤：优先使用新参数，否则使用旧参数
-    // 注意：如果 tableName === 'repaymentSchedule'，queryStatus 是 RepaymentSchedule 的状态，
-    // 不应该用于筛选 LoanAccount.status，因为我们已经通过 RepaymentSchedule 筛选出了符合条件的 loanAccountIds
+    // 状态过滤
     if (tableName !== 'repaymentSchedule') {
       if (queryStatus) {
         where.status = queryStatus;
@@ -784,13 +749,11 @@ export class LoanAccountsService {
         where.status = { in: status };
       }
     } else if (status && status.length > 0) {
-      // 对于 repaymentSchedule 查询，只使用 status 参数（如果有）
       where.status = { in: status };
     }
 
-    // 处理基于 LoanAccount 的日期和状态筛选
+    // 处理基于 LoanAccount 的日期筛选
     if (tableName === 'loanAccounts' || !tableName) {
-      // 日期筛选
       if (startDate && endDate && dateField) {
         const startDateObj = new Date(startDate);
         const endDateObj = new Date(endDate);
@@ -806,7 +769,6 @@ export class LoanAccountsService {
             lte: endDateObj,
           };
         } else if (dateField === 'due_date_range') {
-          // 日期范围筛选：due_start_date >= startDate 且 due_end_date <= endDate
           where.due_start_date = {
             gte: startDateObj,
           };
@@ -826,36 +788,17 @@ export class LoanAccountsService {
       };
     }
 
-    // 调试：打印查询条件
-    if (queryStatus === 'overdue' && dateField === 'due_start_date') {
-      console.log(
-        'LoanAccount 查询条件 where:',
-        JSON.stringify(where, null, 2),
-      );
-      console.log('loanAccountIds 数量:', loanAccountIds.length);
-    }
+    return where;
+  }
 
-    const loans = await this.prisma.loanAccount.findMany({
-      where,
-      include: {
-        user: true,
-        risk_controller: { select: { id: true, username: true } },
-        collector: { select: { id: true, username: true } },
-        lender: { select: { id: true, username: true } },
-      },
-    });
-
-    // 调试：打印查询结果
-    if (queryStatus === 'overdue' && dateField === 'due_start_date') {
-      console.log('LoanAccount 查询结果数量:', loans.length);
-      console.log(
-        '查询到的 loan IDs:',
-        loans.map((l) => l.id),
-      );
-    }
-
-    // 获取当天和明天的日期（用于查询还款计划和排序）
-    // 使用 UTC 时间避免时区问题
+  /**
+   * 获取今天和明天的日期（UTC）
+   */
+  private getTodayAndTomorrowDates(): {
+    today: Date;
+    tomorrow: Date;
+    dayAfterTomorrow: Date;
+  } {
     const now = new Date();
     const today = new Date(
       Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
@@ -865,12 +808,31 @@ export class LoanAccountsService {
     const dayAfterTomorrow = new Date(tomorrow);
     dayAfterTomorrow.setUTCDate(dayAfterTomorrow.getUTCDate() + 1);
 
-    // 批量查询所有贷款的当天和明天的还款计划（用于排序）
-    const allLoanIds = loans.map((loan) => loan.id);
+    return { today, tomorrow, dayAfterTomorrow };
+  }
+
+  /**
+   * 构建还款计划状态映射
+   */
+  private async buildScheduleMap(loanIds: string[]): Promise<
+    Map<
+      string,
+      {
+        todayPaid: boolean;
+        tomorrowPaid: boolean;
+        hasToday: boolean;
+        hasTomorrow: boolean;
+      }
+    >
+  > {
+    const { today, tomorrow, dayAfterTomorrow } =
+      this.getTodayAndTomorrowDates();
+
+    // 批量查询所有贷款的当天和明天的还款计划
     const todayTomorrowSchedules = await this.prisma.repaymentSchedule.findMany(
       {
         where: {
-          loan_id: { in: allLoanIds },
+          loan_id: { in: loanIds },
           due_start_date: {
             gte: today,
             lt: dayAfterTomorrow,
@@ -884,7 +846,7 @@ export class LoanAccountsService {
       },
     );
 
-    // 按 loan_id 分组，判断当天和明天是否有已还清的计划
+    // 初始化映射
     const scheduleMap = new Map<
       string,
       {
@@ -895,7 +857,7 @@ export class LoanAccountsService {
       }
     >();
 
-    allLoanIds.forEach((loanId) => {
+    loanIds.forEach((loanId) => {
       scheduleMap.set(loanId, {
         todayPaid: false,
         tomorrowPaid: false,
@@ -905,12 +867,11 @@ export class LoanAccountsService {
     });
 
     // 将 today 和 tomorrow 转换为日期字符串用于比较
-    const todayStr = today.toISOString().split('T')[0]; // YYYY-MM-DD
-    const tomorrowStr = tomorrow.toISOString().split('T')[0]; // YYYY-MM-DD
+    const todayStr = today.toISOString().split('T')[0];
+    const tomorrowStr = tomorrow.toISOString().split('T')[0];
 
+    // 填充映射
     todayTomorrowSchedules.forEach((schedule) => {
-      // schedule.due_start_date 是 Date 类型，转换为日期字符串进行比较
-      // 使用 UTC 方法确保时区一致性
       const scheduleDate = new Date(schedule.due_start_date);
       const scheduleYear = scheduleDate.getUTCFullYear();
       const scheduleMonth = String(scheduleDate.getUTCMonth() + 1).padStart(
@@ -920,7 +881,6 @@ export class LoanAccountsService {
       const scheduleDay = String(scheduleDate.getUTCDate()).padStart(2, '0');
       const scheduleDateStr = `${scheduleYear}-${scheduleMonth}-${scheduleDay}`;
 
-      // 使用日期字符串比较（更可靠）
       const isToday = scheduleDateStr === todayStr;
       const isTomorrow = scheduleDateStr === tomorrowStr;
       const isPaid = schedule.status === 'paid';
@@ -949,9 +909,9 @@ export class LoanAccountsService {
     });
 
     // 调试：打印 scheduleMap 的内容（仅在开发环境）
-    if (process.env.NODE_ENV === 'development') {
+    if (process.env.NODE_ENV === 'dev') {
       console.log('ScheduleMap 统计:', {
-        totalLoans: allLoanIds.length,
+        totalLoans: loanIds.length,
         totalSchedules: todayTomorrowSchedules.length,
         todayCount: Array.from(scheduleMap.values()).filter((v) => v.hasToday)
           .length,
@@ -967,56 +927,87 @@ export class LoanAccountsService {
       });
     }
 
-    // 根据 status 和还款状态自定义排序
-    const getStatusOrder = (status: LoanAccountStatus): number => {
-      if (status === 'pending') return 1;
-      if (status === 'settled') return 2;
-      if (status === 'negotiated') return 3;
-      if (status === 'blacklist') return 4;
-      return 5; // 其他状态排在最后
+    return scheduleMap;
+  }
+
+  /**
+   * 获取状态排序优先级
+   */
+  private getStatusOrder(status: LoanAccountStatus): number {
+    if (status === 'pending') return 1;
+    if (status === 'settled') return 2;
+    if (status === 'negotiated') return 3;
+    if (status === 'blacklist') return 4;
+    return 5; // 其他状态排在最后
+  }
+
+  /**
+   * 获取还款状态排序优先级
+   * 1. 今天未还的（有今天的还款计划且未还）
+   * 2. 今天已还的（有今天的还款计划且已还）
+   * 3. 明天未还的（有明天的还款计划且未还）
+   * 4. 明天已还的（有明天的还款计划且已还）
+   * 5. 其他（没有今天或明天的还款计划）
+   */
+  private getPaymentStatusOrder(
+    loanId: string,
+    scheduleMap: Map<
+      string,
+      {
+        todayPaid: boolean;
+        tomorrowPaid: boolean;
+        hasToday: boolean;
+        hasTomorrow: boolean;
+      }
+    >,
+  ): number {
+    const scheduleInfo = scheduleMap.get(loanId) || {
+      todayPaid: false,
+      tomorrowPaid: false,
+      hasToday: false,
+      hasTomorrow: false,
     };
 
-    // 获取还款状态排序优先级
-    // 1. 今天未还的（有今天的还款计划且未还）
-    // 2. 今天已还的（有今天的还款计划且已还）
-    // 3. 明天未还的（有明天的还款计划且未还）
-    // 4. 明天已还的（有明天的还款计划且已还）
-    // 5. 其他（没有今天或明天的还款计划）
-    const getPaymentStatusOrder = (loanId: string): number => {
-      const scheduleInfo = scheduleMap.get(loanId) || {
-        todayPaid: false,
-        tomorrowPaid: false,
-        hasToday: false,
-        hasTomorrow: false,
-      };
+    // 优先处理今天的还款计划
+    if (scheduleInfo.hasToday) {
+      return scheduleInfo.todayPaid ? 2 : 1;
+    }
 
-      // 优先处理今天的还款计划
-      if (scheduleInfo.hasToday) {
-        // 有今天的还款计划：未还=1（排前面），已还=2
-        return scheduleInfo.todayPaid ? 2 : 1;
+    // 其次处理明天的还款计划
+    if (scheduleInfo.hasTomorrow) {
+      return scheduleInfo.tomorrowPaid ? 4 : 3;
+    }
+
+    // 没有今天或明天的还款计划
+    return 5;
+  }
+
+  /**
+   * 对贷款列表进行排序
+   */
+  private sortLoans(
+    loans: LoanAccount[],
+    scheduleMap: Map<
+      string,
+      {
+        todayPaid: boolean;
+        tomorrowPaid: boolean;
+        hasToday: boolean;
+        hasTomorrow: boolean;
       }
-
-      // 其次处理明天的还款计划
-      if (scheduleInfo.hasTomorrow) {
-        // 有明天的还款计划：未还=3，已还=4
-        return scheduleInfo.tomorrowPaid ? 4 : 3;
-      }
-
-      // 没有今天或明天的还款计划
-      return 5;
-    };
-
-    const sortedLoans = loans.sort((a, b) => {
+    >,
+  ): LoanAccount[] {
+    return loans.sort((a, b) => {
       // 第一优先级：按 status 排序
-      const orderA = getStatusOrder(a.status);
-      const orderB = getStatusOrder(b.status);
+      const orderA = this.getStatusOrder(a.status);
+      const orderB = this.getStatusOrder(b.status);
       if (orderA !== orderB) {
         return orderA - orderB;
       }
 
       // 第二优先级：按还款状态排序（今天/明天是否已还）
-      const paymentOrderA = getPaymentStatusOrder(a.id);
-      const paymentOrderB = getPaymentStatusOrder(b.id);
+      const paymentOrderA = this.getPaymentStatusOrder(a.id, scheduleMap);
+      const paymentOrderB = this.getPaymentStatusOrder(b.id, scheduleMap);
       if (paymentOrderA !== paymentOrderB) {
         return paymentOrderA - paymentOrderB;
       }
@@ -1024,45 +1015,58 @@ export class LoanAccountsService {
       // 第三优先级：如果 status 和还款状态都相同，按 apply_times 排序
       return a.apply_times - b.apply_times;
     });
+  }
 
-    // 计算统计数据（基于所有符合筛选条件的数据，不受分页影响）
-    let inStock = 0; // 在库：状态为pending或negotiated的loan_amount总和
-    let handlingFee = 0; // 后扣：所有handling_fee总和
-    let fines = 0; // 罚金：所有total_fines总和
-    let remainingDebt = 0; // 还欠：状态为pending或negotiated的(loan_amount - paid_capital)总和
+  /**
+   * 计算统计数据
+   */
+  private calculateStatistics(loans: LoanAccount[]): {
+    inStock: number;
+    handlingFee: number;
+    fines: number;
+    remainingDebt: number;
+  } {
+    let inStock = 0;
+    let handlingFee = 0;
+    let fines = 0;
+    let remainingDebt = 0;
 
-    sortedLoans.forEach((loan) => {
+    loans.forEach((loan) => {
       const loanAmount = Number(loan.loan_amount) || 0;
       const paidCapital = Number(loan.paid_capital) || 0;
       const handlingFeeValue = Number(loan.handling_fee) || 0;
       const finesValue = Number(loan.total_fines) || 0;
 
-      // 后扣：所有handling_fee总和
       handlingFee += handlingFeeValue;
-
-      // 罚金：所有total_fines总和
       fines += finesValue;
 
-      // 在库和还欠：只统计pending或negotiated状态
       if (loan.status === 'pending' || loan.status === 'negotiated') {
-        // 在库：状态为pending或negotiated的loan_amount总和
         inStock += loanAmount;
-
-        // 还欠：状态为pending或negotiated的(loan_amount - paid_capital)总和
         remainingDebt += Math.max(0, loanAmount - paidCapital);
       }
     });
 
-    const total = sortedLoans.length;
+    return { inStock, handlingFee, fines, remainingDebt };
+  }
 
-    // 在分页前获取所有不重复的归属人列表
+  /**
+   * 从贷款列表中提取相关管理员列表
+   */
+  private extractRelatedAdminsFromLoans(
+    loans: Array<
+      LoanAccount & {
+        risk_controller?: { id: number; username: string } | null;
+        collector?: { id: number; username: string } | null;
+      }
+    >,
+    admin: { role: ManagementRoles } | null,
+  ): Array<{ id: number; username: string; role: string }> {
     const relatedAdminsMap = new Map<
       number,
       { id: number; username: string; role: string }
     >();
 
-    sortedLoans.forEach((loan) => {
-      // 根据当前用户角色决定提取哪个归属人
+    loans.forEach((loan) => {
       if (admin && admin.role === 'COLLECTOR') {
         // 负责人访问：提取关联的风控人
         if (loan.risk_controller) {
@@ -1108,11 +1112,137 @@ export class LoanAccountsService {
       }
     });
 
-    const relatedAdmins = Array.from(relatedAdminsMap.values()).sort((a, b) =>
+    return Array.from(relatedAdminsMap.values()).sort((a, b) =>
       a.username.localeCompare(b.username),
     );
+  }
 
-    // 分页处理
+  async findGroupedByUser(
+    status?: LoanAccountStatus[],
+    adminId?: number,
+    page?: number,
+    pageSize?: number,
+    filterAdminId?: number,
+    tableName?: 'loanAccounts' | 'repaymentSchedule',
+    startDate?: string,
+    endDate?: string,
+    queryStatus?: string,
+    dateField?:
+      | 'due_start_date'
+      | 'paid_at'
+      | 'status_changed_at'
+      | 'due_date_range',
+    keyword?: string,
+  ): Promise<{
+    statistics: {
+      inStock: number;
+      handlingFee: number;
+      fines: number;
+      remainingDebt: number;
+    };
+    data: LoanAccount[];
+    total: number;
+    relatedAdmins: Array<{ id: number; username: string; role: string }>;
+  }> {
+    // 1. 权限过滤：获取该admin相关的所有loan_account_ids
+    let loanAccountIds: string[] = [];
+    let admin: { role: ManagementRoles } | null = null;
+
+    if (adminId) {
+      const result = await this.getAdminLoanAccountIds(adminId);
+      loanAccountIds = result.loanAccountIds;
+      admin = result.admin;
+
+      if (loanAccountIds.length === 0 && admin && admin.role !== 'ADMIN') {
+        return this.getEmptyResult();
+      }
+    }
+
+    // 2. 基于 RepaymentSchedule 的筛选
+    if (tableName === 'repaymentSchedule') {
+      loanAccountIds = await this.filterLoanIdsByRepaymentSchedule(
+        loanAccountIds,
+        queryStatus,
+        startDate,
+        endDate,
+        dateField,
+      );
+
+      if (loanAccountIds.length === 0) {
+        return this.getEmptyResult();
+      }
+    }
+
+    // 3. 归属人筛选
+    if (filterAdminId) {
+      loanAccountIds = await this.filterLoanIdsByAdmin(
+        loanAccountIds,
+        filterAdminId,
+      );
+
+      if (loanAccountIds.length === 0) {
+        return this.getEmptyResult();
+      }
+    }
+
+    // 4. 构建查询条件
+    const where = this.buildLoanAccountWhere(
+      loanAccountIds,
+      status,
+      tableName,
+      queryStatus,
+      startDate,
+      endDate,
+      dateField,
+      keyword,
+    );
+
+    // 调试：打印查询条件
+    if (queryStatus === 'overdue' && dateField === 'due_start_date') {
+      console.log(
+        'LoanAccount 查询条件 where:',
+        JSON.stringify(where, null, 2),
+      );
+      console.log('loanAccountIds 数量:', loanAccountIds.length);
+    }
+
+    // 5. 查询 LoanAccount 数据
+    const loans = await this.prisma.loanAccount.findMany({
+      where,
+      include: {
+        user: true,
+        risk_controller: { select: { id: true, username: true } },
+        collector: { select: { id: true, username: true } },
+        lender: { select: { id: true, username: true } },
+      },
+    });
+
+    // 调试：打印查询结果
+    if (queryStatus === 'overdue' && dateField === 'due_start_date') {
+      console.log('LoanAccount 查询结果数量:', loans.length);
+      console.log(
+        '查询到的 loan IDs:',
+        loans.map((l) => l.id),
+      );
+    }
+
+    // 6. 构建还款计划状态映射
+    const allLoanIds = loans.map((loan) => loan.id);
+    const scheduleMap = await this.buildScheduleMap(allLoanIds);
+
+    // 7. 排序
+    const sortedLoans = this.sortLoans(loans, scheduleMap);
+
+    // 8. 计算统计数据
+    const statistics = this.calculateStatistics(sortedLoans);
+
+    // 9. 获取相关管理员列表
+    const relatedAdmins = this.extractRelatedAdminsFromLoans(
+      sortedLoans,
+      admin,
+    );
+
+    // 10. 分页处理
     let paginatedLoans = sortedLoans;
     if (page !== undefined && pageSize !== undefined) {
       const startIndex = (page - 1) * pageSize;
@@ -1120,7 +1250,7 @@ export class LoanAccountsService {
       paginatedLoans = sortedLoans.slice(startIndex, endIndex);
     }
 
-    // 为每个 loan 添加 today_paid 和 tomorrow_paid 字段
+    // 11. 为每个 loan 添加 today_paid 和 tomorrow_paid 字段
     const processedLoans = paginatedLoans.map((loan) => {
       const scheduleInfo = scheduleMap.get(loan.id) || {
         todayPaid: false,
@@ -1136,14 +1266,9 @@ export class LoanAccountsService {
     });
 
     return {
-      statistics: {
-        inStock,
-        handlingFee,
-        fines,
-        remainingDebt,
-      },
+      statistics,
       data: processedLoans,
-      total,
+      total: sortedLoans.length,
       relatedAdmins,
     };
   }

@@ -124,6 +124,7 @@ export class MobileTerminalService {
     const payees = await this.prisma.payee.findMany({
       select: {
         id: true,
+        admin_id: true,
         username: true,
         address: true,
         remaining_limit: true,
@@ -166,6 +167,7 @@ export class MobileTerminalService {
 
         return {
           id: payee.id,
+          admin_id: payee.admin_id,
           username: payee.username,
           address: payee.address,
           today_collection: todayStats.daily_total,

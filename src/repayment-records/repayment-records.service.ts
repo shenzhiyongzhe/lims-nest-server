@@ -149,7 +149,19 @@ export class RepaymentRecordsService {
 
     if (userId) where.user_id = userId;
     if (loanId) where.loan_id = loanId;
-    if (payeeId) where.actual_collector_id = payeeId;
+    if (payeeId) {
+      // payeeId 是 Payee 表的 id，需要转换为对应的 admin_id
+      const payee = await this.prisma.payee.findUnique({
+        where: { id: payeeId },
+        select: { admin_id: true },
+      });
+      if (payee) {
+        where.actual_collector_id = payee.admin_id;
+      } else {
+        // 如果找不到对应的 payee，设置一个不存在的 id，这样查询结果为空
+        where.actual_collector_id = -1;
+      }
+    }
 
     if (startDate || endDate) {
       where.paid_at = {};

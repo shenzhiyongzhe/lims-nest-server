@@ -11,7 +11,7 @@ interface OrderPayload {
   payment_periods: number;
   payment_method: PaymentMethod;
   remark?: string | null;
-  customer: { address?: string };
+  customer: { address?: string; username?: string; phone?: string };
 }
 
 @Injectable()

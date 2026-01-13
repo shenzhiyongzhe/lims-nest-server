@@ -6,24 +6,6 @@ import { randomUUID } from 'crypto';
 export class EventsController {
   constructor(private readonly eventsService: EventsService) {}
 
-  private parseAdminIdFromCookie(
-    cookies: Record<string, string>,
-  ): number | null {
-    const adminCookie = cookies['admin'];
-    if (!adminCookie) return null;
-    try {
-      const parsed: unknown = JSON.parse(adminCookie);
-      if (typeof parsed === 'object' && parsed !== null && 'id' in parsed) {
-        const idVal = (parsed as { id?: unknown }).id;
-        const n = Number(idVal);
-        if (Number.isFinite(n)) return n;
-      }
-    } catch {
-      // ignore
-    }
-    return null;
-  }
-
   private buildSubmitOrderPayload(data: unknown) {
     if (!data || typeof data !== 'object') {
       throw new BadRequestException('Invalid order payload');

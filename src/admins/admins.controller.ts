@@ -216,6 +216,54 @@ export class AdminController {
     return ResponseHelper.success(data, '密码已重置为123456');
   }
 
+  @Post('change-password')
+  @UseGuards(AuthGuard)
+  async changePassword(
+    @Req() req: Request,
+    @Body('oldPassword') oldPassword: string,
+    @Body('newPassword') newPassword: string,
+  ): Promise<ApiResponseDto> {
+    const adminId = (req as any).user?.id;
+    if (!adminId) {
+      throw new UnauthorizedException('未授权');
+    }
+
+    if (!oldPassword || !newPassword) {
+      throw new BadRequestException('旧密码和新密码不能为空');
+    }
+
+    if (newPassword.length < 6 || newPassword.length > 32) {
+      throw new BadRequestException('新密码长度必须在6-32个字符之间');
+    }
+
+    // 查找管理员
+    const admin = await this.adminService.findById(adminId);
+    if (!admin) {
+      throw new NotFoundException('管理员不存在');
+    }
+
+    // 验证旧密码
+    const isOldPasswordValid = await this.adminService.comparePassword(
+      oldPassword,
+      admin.password,
+    );
+
+    if (!isOldPasswordValid) {
+      throw new UnauthorizedException('旧密码错误');
+    }
+
+    // 更新密码
+    const updated = await this.adminService.update(adminId, {
+      username: admin.username,
+      password: newPassword,
+      role: admin.role,
+      email: admin.email || undefined,
+    });
+
+    const data = this.adminService.toResponse(updated);
+    return ResponseHelper.success(data, '密码修改成功，请重新登录');
+  }
+
   @Post('emergency-reset-password')
   async emergencyResetPassword(
     @Body('username') username: string,

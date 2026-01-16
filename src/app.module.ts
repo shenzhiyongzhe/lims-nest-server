@@ -24,6 +24,7 @@ import { LoanPredictionModule } from './loan-prediction/loan-prediction.module';
 import { BackupModule } from './backup/backup.module';
 import { MobileTerminalModule } from './mobile-terminal/mobile-terminal.module';
 import { RandomDecimalModule } from './random-decimal/random-decimal.module';
+import { EmailConfigModule } from './email-config/email-config.module';
 @Module({
   imports: [
     ScheduleModule.forRoot(),
@@ -51,6 +52,7 @@ import { RandomDecimalModule } from './random-decimal/random-decimal.module';
     BackupModule,
     MobileTerminalModule,
     RandomDecimalModule,
+    EmailConfigModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -486,3 +486,38 @@ model DailyRandomDecimal {
   @@index([date])
   @@map("daily_random_decimals")
 }
+
+model EmailConfig {
+  id                Int       @id @default(autoincrement())
+  name              String    @db.VarChar(50)  // 配置名称（便于识别）
+  host              String    @db.VarChar(100) // SMTP服务器地址
+  port              Int       @default(587)    // SMTP端口
+  secure            Boolean   @default(false)  // 是否使用SSL/TLS
+  user              String    @db.VarChar(100) // SMTP用户名
+  pass              String    @db.VarChar(255) // SMTP密码/授权码
+  from              String?   @db.VarChar(100) // 发件人邮箱（可选，默认使用user）
+  is_enabled        Boolean   @default(true)   // 是否启用
+  daily_sent_count  Int       @default(0)      // 今日发送数量
+  total_sent_count  Int       @default(0)      // 总发送数量
+  last_reset_date   DateTime?                  // 上次重置日期
+  created_at        DateTime  @default(now())
+  updated_at        DateTime  @updatedAt
+  emailLogs         EmailLog[]
+
+  @@map("email_configs")
+}
+
+model EmailLog {
+  id            Int         @id @default(autoincrement())
+  email_config_id Int
+  email_config   EmailConfig @relation(fields: [email_config_id], references: [id], onDelete: Cascade)
+  to_email      String      @db.VarChar(100)  // 收件人
+  subject       String      @db.VarChar(200)   // 邮件主题
+  status        String      @db.VarChar(20)    // success/failed
+  error_message String?     @db.Text           // 错误信息（如果失败）
+  sent_at       DateTime    @default(now())    // 发送时间
+
+  @@index([email_config_id])
+  @@index([sent_at])
+  @@map("email_logs")
+}

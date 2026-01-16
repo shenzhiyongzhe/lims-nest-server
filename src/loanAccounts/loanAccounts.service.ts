@@ -909,7 +909,7 @@ export class LoanAccountsService {
     });
 
     // 调试：打印 scheduleMap 的内容（仅在开发环境）
-    if (process.env.NODE_ENV === 'dev') {
+    if (process.env.NODE_ENV === 'development') {
       console.log('ScheduleMap 统计:', {
         totalLoans: loanIds.length,
         totalSchedules: todayTomorrowSchedules.length,

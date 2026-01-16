@@ -119,22 +119,7 @@ export class AssetManagementController {
       request.socket.remoteAddress ||
       undefined;
 
-    // 获取用户名
-    let username: string = user.username || '';
-    if (!username) {
-      // 如果装饰器没有提供用户名，从 cookies 获取
-      const adminStr = request.cookies?.admin;
-      if (adminStr) {
-        try {
-          const admin = JSON.parse(adminStr);
-          username = admin.username || `admin_${user.id}`;
-        } catch (e) {
-          username = `admin_${user.id}`;
-        }
-      } else {
-        username = `admin_${user.id}`;
-      }
-    }
+    const username: string = user.username || '';
 
     const asset = await this.assetManagementService.updateRiskControllerAsset(
       adminId,

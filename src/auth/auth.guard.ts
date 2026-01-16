@@ -6,6 +6,8 @@ import {
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { randomBytes } from 'crypto';
+import { AuthJwtService } from './jwt.service';
+import { PrismaService } from '../../prisma/prisma.service';
 
 interface AuthenticatedRequest extends Request {
   user: { id: number; role: string };
@@ -14,32 +16,125 @@ interface AuthenticatedRequest extends Request {
 
 @Injectable()
 export class AuthGuard implements CanActivate {
-  canActivate(context: ExecutionContext): boolean {
+  constructor(
+    private readonly authJwtService: AuthJwtService,
+    private readonly prisma: PrismaService,
+  ) {}
+
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
     const response = context.switchToHttp().getResponse<Response>();
 
-    const admin_id = request.cookies?.admin_id as string | undefined;
-    const admin_role = request.cookies?.admin_role as string | undefined;
-    let client_id = request.cookies?.client_id as string | undefined;
+    // 优先使用JWT token验证
+    const accessToken = request.cookies?.access_token as string | undefined;
+    const refreshToken = request.cookies?.refresh_token as string | undefined;
 
-    if (!admin_id || !admin_role) {
-      throw new UnauthorizedException('未登录');
+    if (accessToken) {
+      // 验证Access Token
+      const payload = this.authJwtService.verifyAccessToken(accessToken);
+
+      if (payload) {
+        // Token有效，检查是否即将过期（滑动过期机制）
+        if (this.authJwtService.isTokenExpiringSoon(accessToken)) {
+          // Token即将过期，尝试自动刷新
+          await this.attemptTokenRefresh(refreshToken, response, payload);
+        }
+
+        // 从数据库验证用户和token版本
+        const admin = await this.prisma.admin.findUnique({
+          where: { id: payload.id },
+          select: { id: true, username: true, role: true, token_version: true },
+        });
+
+        if (!admin) {
+          throw new UnauthorizedException('用户不存在');
+        }
+
+        request.user = { id: admin.id, role: admin.role };
+        return true;
+      } else if (refreshToken) {
+        // Access Token无效，尝试使用Refresh Token刷新
+        const refreshed = await this.attemptTokenRefresh(
+          refreshToken,
+          response,
+        );
+        if (refreshed) {
+          const refreshPayload =
+            this.authJwtService.verifyRefreshToken(refreshToken);
+          if (refreshPayload) {
+            const admin = await this.prisma.admin.findUnique({
+              where: { id: refreshPayload.id },
+              select: { id: true, username: true, role: true },
+            });
+
+            if (admin) {
+              request.user = { id: admin.id, role: admin.role };
+              return true;
+            }
+          }
+        }
+      }
+    }
+    throw new UnauthorizedException('未登录或token已过期');
+  }
+
+  // 尝试刷新token
+  private async attemptTokenRefresh(
+    refreshToken: string | undefined,
+    response: Response,
+    currentPayload?: { id: number; username: string; role: string },
+  ): Promise<boolean> {
+    if (!refreshToken) {
+      return false;
     }
 
-    // 如果没有客户端ID，为管理员生成一个新的
-    if (!client_id) {
-      client_id = randomBytes(16).toString('hex');
-      response.cookie('client_id', client_id, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'strict',
-        maxAge: 30 * 24 * 60 * 60 * 1000, // 30天
-      });
+    const payload = this.authJwtService.verifyRefreshToken(refreshToken);
+    if (!payload) {
+      return false;
     }
 
-    // 将用户信息和客户端ID添加到请求对象中
-    request.user = { id: parseInt(admin_id), role: admin_role };
-    request.clientId = client_id;
+    // 从数据库验证token版本
+    const admin = await this.prisma.admin.findUnique({
+      where: { id: payload.id },
+      select: { id: true, username: true, role: true, token_version: true },
+    });
+
+    if (!admin || admin.token_version !== payload.tokenVersion) {
+      return false;
+    }
+
+    // 生成新的tokens
+    const newAccessToken = this.authJwtService.generateAccessToken({
+      id: admin.id,
+      username: admin.username,
+      role: admin.role,
+    });
+
+    const newRefreshToken = this.authJwtService.generateRefreshToken({
+      id: admin.id,
+      username: admin.username,
+      role: admin.role,
+      tokenVersion: admin.token_version,
+    });
+
+    // 更新cookies（滑动过期）
+    const isProduction = process.env.NODE_ENV === 'production';
+    const cookieOptions = {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: isProduction ? ('strict' as const) : ('lax' as const),
+      path: '/',
+      maxAge: 15 * 60 * 1000, // Access Token: 15分钟
+    };
+
+    const refreshCookieOptions = {
+      ...cookieOptions,
+      maxAge: 7 * 24 * 60 * 60 * 1000, // Refresh Token: 7天（滑动过期）
+    };
+
+    response.cookie('access_token', newAccessToken, cookieOptions);
+    response.cookie('refresh_token', newRefreshToken, refreshCookieOptions);
+
     return true;
   }
 }

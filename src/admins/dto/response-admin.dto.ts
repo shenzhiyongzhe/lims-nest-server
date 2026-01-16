@@ -4,6 +4,7 @@ import {
   IsString,
   Length,
   Matches,
+  IsEmail,
 } from 'class-validator';
 
 export class ResponseAdminDto {
@@ -16,10 +17,15 @@ export class ResponseAdminDto {
 
   @IsOptional()
   @IsString()
-  @Length(6, 32)
+  @Length(6, 255)
   password: string;
 
   @IsString()
   @Length(1, 16)
   role: string;
+
+  @IsString()
+  @IsEmail()
+  @IsOptional()
+  email?: string;
 }

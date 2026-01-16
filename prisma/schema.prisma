@@ -29,11 +29,16 @@ model User {
 model Admin {
   id                            Int                            @id @default(autoincrement())
   username                      String                         @db.VarChar(10)
-  password                      String                         @default("123456") @db.VarChar(32)
+  password                      String                         @default("123456") @db.VarChar(255)
   email                         String?                        @db.VarChar(100)
   role                          ManagementRoles
   createdAt                     DateTime                       @default(now())
   updatedAt                     DateTime?                      @updatedAt
+  failed_login_attempts         Int                            @default(0)
+  locked_until                  DateTime?
+  last_login_at                 DateTime?
+  last_login_ip                 String?                        @db.VarChar(45)
+  token_version                 Int                            @default(1)
   assetReductionHistory         AssetReductionHistory[]        @relation("AssetReductionHistory")
   collectorAssetManagement      CollectorAssetManagement?
   dailyStatistics               DailyStatistics[]
